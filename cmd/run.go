@@ -41,30 +41,21 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/loadimpact/k6/api"
-	"github.com/loadimpact/k6/core"
-	"github.com/loadimpact/k6/core/local"
-	"github.com/loadimpact/k6/js"
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/consts"
-	"github.com/loadimpact/k6/lib/types"
-	"github.com/loadimpact/k6/loader"
-	"github.com/loadimpact/k6/ui/pb"
+	"go.k6.io/k6/api"
+	"go.k6.io/k6/core"
+	"go.k6.io/k6/core/local"
+	"go.k6.io/k6/errext"
+	"go.k6.io/k6/errext/exitcodes"
+	"go.k6.io/k6/js"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/consts"
+	"go.k6.io/k6/loader"
+	"go.k6.io/k6/ui/pb"
 )
 
 const (
 	typeJS      = "js"
 	typeArchive = "archive"
-
-	thresholdHaveFailedErrorCode = 99
-	setupTimeoutErrorCode        = 100
-	teardownTimeoutErrorCode     = 101
-	genericTimeoutErrorCode      = 102
-	genericEngineErrorCode       = 103
-	invalidConfigErrorCode       = 104
-	externalAbortErrorCode       = 105
-	cannotStartRESTAPIErrorCode  = 106
-	scriptExceptionErrorCode     = 107
 )
 
 // TODO: fix this, global variables are not very testable...
@@ -102,7 +93,7 @@ a commandline interface for interacting with it.`,
 		Args: exactArgsWithMsg(1, "arg should either be \"-\", if reading script from stdin, or a path to a script file"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// TODO: disable in quiet mode?
-			_, _ = BannerColor.Fprintf(stdout, "\n%s\n\n", consts.Banner())
+			_, _ = fmt.Fprintf(stdout, "\n%s\n\n", getBanner(noColor || !stdoutTTY))
 
 			logger.Debug("Initializing the runner...")
 
@@ -140,9 +131,9 @@ a commandline interface for interacting with it.`,
 				return err
 			}
 
-			conf, cerr := deriveAndValidateConfig(conf, initRunner.IsExecutable)
-			if cerr != nil {
-				return ExitCode{error: cerr, Code: invalidConfigErrorCode}
+			conf, err = deriveAndValidateConfig(conf, initRunner.IsExecutable)
+			if err != nil {
+				return err
 			}
 
 			// Write options back to the runner too.
@@ -215,7 +206,7 @@ a commandline interface for interacting with it.`,
 						// Only exit k6 if the user has explicitly set the REST API address
 						if cmd.Flags().Lookup("address").Changed {
 							logger.WithError(aerr).Error("Error from API server")
-							os.Exit(cannotStartRESTAPIErrorCode)
+							os.Exit(int(exitcodes.CannotStartRESTAPI))
 						} else {
 							logger.WithError(aerr).Warn("Error from API server")
 						}
@@ -233,7 +224,7 @@ a commandline interface for interacting with it.`,
 
 			printExecutionDescription(
 				"local", filename, "", conf, execScheduler.GetState().ExecutionTuple,
-				executionPlan, outputs)
+				executionPlan, outputs, noColor || !stdoutTTY)
 
 			// Trap Interrupts, SIGINTs and SIGTERMs.
 			sigC := make(chan os.Signal, 1)
@@ -245,18 +236,19 @@ a commandline interface for interacting with it.`,
 				lingerCancel() // stop the test run, metric processing is cancelled below
 
 				// If we get a second signal, we immediately exit, so something like
-				// https://github.com/loadimpact/k6/issues/971 never happens again
+				// https://github.com/k6io/k6/issues/971 never happens again
 				sig = <-sigC
 				logger.WithField("sig", sig).Error("Aborting k6 in response to signal")
 				globalCancel() // not that it matters, given the following command...
-				os.Exit(externalAbortErrorCode)
+				os.Exit(int(exitcodes.ExternalAbort))
 			}()
 
 			// Initialize the engine
 			initBar.Modify(pb.WithConstProgress(0, "Init VUs..."))
 			engineRun, engineWait, err := engine.Init(globalCtx, runCtx)
 			if err != nil {
-				return getExitCodeFromEngine(err)
+				// Add a generic engine exit code if we don't have a more specific one
+				return errext.WithExitCodeIfNone(err, exitcodes.GenericEngine)
 			}
 
 			// Init has passed successfully, so unless disabled, make sure we send a
@@ -279,7 +271,7 @@ a commandline interface for interacting with it.`,
 			// Start the test run
 			initBar.Modify(pb.WithConstProgress(0, "Starting test..."))
 			if err := engineRun(); err != nil {
-				return getExitCodeFromEngine(err)
+				return errext.WithExitCodeIfNone(err, exitcodes.GenericEngine)
 			}
 			runCancel()
 			logger.Debug("Engine run terminated cleanly")
@@ -299,6 +291,11 @@ a commandline interface for interacting with it.`,
 					Metrics:         engine.Metrics,
 					RootGroup:       engine.ExecutionScheduler.GetRunner().GetDefaultGroup(),
 					TestRunDuration: executionState.GetCurrentTestRunDuration(),
+					NoColor:         noColor,
+					UIState: lib.UIState{
+						IsStdOutTTY: stdoutTTY,
+						IsStdErrTTY: stderrTTY,
+					},
 				})
 				if err == nil {
 					err = handleSummaryResult(afero.NewOsFs(), stdout, stderr, summaryResult)
@@ -324,7 +321,7 @@ a commandline interface for interacting with it.`,
 			engineWait()
 			logger.Debug("Everything has finished, exiting k6!")
 			if engine.IsTainted() {
-				return ExitCode{error: errors.New("some thresholds have failed"), Code: thresholdHaveFailedErrorCode}
+				return errext.WithExitCodeIfNone(errors.New("some thresholds have failed"), exitcodes.ThresholdsHaveFailed)
 			}
 			return nil
 		},
@@ -334,27 +331,6 @@ a commandline interface for interacting with it.`,
 	runCmd.Flags().AddFlagSet(runCmdFlagSet())
 
 	return runCmd
-}
-
-func getExitCodeFromEngine(err error) ExitCode {
-	var terr lib.TimeoutError
-	if errors.As(err, &terr) {
-		switch terr.Place() {
-		case consts.SetupFn:
-			return ExitCode{error: err, Code: setupTimeoutErrorCode, Hint: terr.Hint()}
-		case consts.TeardownFn:
-			return ExitCode{error: err, Code: teardownTimeoutErrorCode, Hint: terr.Hint()}
-		default:
-			return ExitCode{error: err, Code: genericTimeoutErrorCode}
-		}
-	}
-
-	var serr types.ScriptException
-	if errors.As(err, &serr) {
-		return ExitCode{error: serr, Code: scriptExceptionErrorCode, Hint: "script exception"}
-	}
-
-	return ExitCode{error: errors.New("engine error"), Code: genericEngineErrorCode, Hint: err.Error()}
 }
 
 func reportUsage(execScheduler *local.ExecutionScheduler) error {
@@ -430,13 +406,6 @@ func newRunner(
 		}
 	default:
 		return nil, fmt.Errorf("unknown -t/--type: %s", typ)
-	}
-
-	if err != nil {
-		var serr types.ScriptException
-		if errors.As(err, &serr) {
-			err = ExitCode{error: serr, Code: scriptExceptionErrorCode, Hint: "script exception"}
-		}
 	}
 
 	return runner, err

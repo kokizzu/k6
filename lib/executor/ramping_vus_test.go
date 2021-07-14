@@ -34,8 +34,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/guregu/null.v3"
 
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/types"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/types"
 )
 
 func TestRampingVUsConfigValidation(t *testing.T) {
@@ -248,7 +248,7 @@ func TestRampingVUsGracefulRampDown(t *testing.T) {
 	ctx, cancel, executor, _ := setupExecutor(
 		t, config, es,
 		simpleRunner(func(ctx context.Context) error {
-			if lib.GetState(ctx).Vu == 1 { // the first VU will wait here to do stuff
+			if lib.GetState(ctx).VUID == 1 { // the first VU will wait here to do stuff
 				close(started)
 				defer close(stopped)
 				select {
@@ -281,7 +281,7 @@ func TestRampingVUsGracefulRampDown(t *testing.T) {
 }
 
 // Ensure there's no wobble of VUs during graceful ramp-down, without segments.
-// See https://github.com/loadimpact/k6/issues/1296
+// See https://github.com/k6io/k6/issues/1296
 func TestRampingVUsRampDownNoWobble(t *testing.T) {
 	t.Parallel()
 
@@ -318,7 +318,7 @@ func TestRampingVUsRampDownNoWobble(t *testing.T) {
 		3000 * time.Millisecond,
 	}
 	const rampDownSampleTime = 50 * time.Millisecond
-	var rampDownSamples = int(time.Duration(
+	rampDownSamples := int(time.Duration(
 		config.Stages[len(config.Stages)-1].Duration.Duration+config.GracefulRampDown.Duration,
 	) / rampDownSampleTime)
 
@@ -750,6 +750,7 @@ func TestRampingVUsExecutionTupleTests(t *testing.T) {
 		expectedSteps := testCase.expectedSteps
 
 		t.Run(et.String(), func(t *testing.T) {
+			t.Parallel()
 			rawStepsNoZeroEnd := conf.getRawExecutionSteps(et, false)
 			assert.Equal(t, expectedSteps, rawStepsNoZeroEnd)
 		})
@@ -919,6 +920,7 @@ func TestRampingVUsGetRawExecutionStepsCornerCases(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
+		testCase := testCase
 		conf := NewRampingVUsConfig("test")
 		conf.StartVUs = null.IntFrom(testCase.start)
 		conf.Stages = testCase.stages
@@ -929,6 +931,7 @@ func TestRampingVUsGetRawExecutionStepsCornerCases(t *testing.T) {
 		expectedSteps := testCase.expectedSteps
 
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			rawStepsNoZeroEnd := conf.getRawExecutionSteps(et, false)
 			assert.Equal(t, expectedSteps, rawStepsNoZeroEnd)
 		})
@@ -998,199 +1001,8 @@ func BenchmarkRampingVUsGetRawExecutionSteps(b *testing.B) {
 	}
 }
 
-func TestSegmentedIndex(t *testing.T) {
-	// TODO ... more structure ?
-	t.Run("full", func(t *testing.T) {
-		s := segmentedIndex{start: 0, lcd: 1, offsets: []int64{1}}
-
-		s.next()
-		assert.EqualValues(t, 1, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 0, s.unscaled)
-		assert.EqualValues(t, 0, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 1, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 2, s.unscaled)
-		assert.EqualValues(t, 2, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 3, s.unscaled)
-		assert.EqualValues(t, 3, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 2, s.unscaled)
-		assert.EqualValues(t, 2, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 1, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 2, s.unscaled)
-		assert.EqualValues(t, 2, s.scaled)
-	})
-
-	t.Run("half", func(t *testing.T) {
-		s := segmentedIndex{start: 0, lcd: 2, offsets: []int64{2}}
-
-		s.next()
-		assert.EqualValues(t, 1, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 0, s.unscaled)
-		assert.EqualValues(t, 0, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 1, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 3, s.unscaled)
-		assert.EqualValues(t, 2, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 5, s.unscaled)
-		assert.EqualValues(t, 3, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 3, s.unscaled)
-		assert.EqualValues(t, 2, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 1, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 0, s.unscaled)
-		assert.EqualValues(t, 0, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 1, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-	})
-
-	t.Run("the other half", func(t *testing.T) {
-		s := segmentedIndex{start: 1, lcd: 2, offsets: []int64{2}}
-
-		s.next()
-		assert.EqualValues(t, 2, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 0, s.unscaled)
-		assert.EqualValues(t, 0, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 2, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 4, s.unscaled)
-		assert.EqualValues(t, 2, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 6, s.unscaled)
-		assert.EqualValues(t, 3, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 4, s.unscaled)
-		assert.EqualValues(t, 2, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 2, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 0, s.unscaled)
-		assert.EqualValues(t, 0, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 2, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-	})
-
-	t.Run("strange", func(t *testing.T) {
-		s := segmentedIndex{start: 1, lcd: 7, offsets: []int64{4, 3}}
-
-		s.next()
-		assert.EqualValues(t, 2, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 0, s.unscaled)
-		assert.EqualValues(t, 0, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 2, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 6, s.unscaled)
-		assert.EqualValues(t, 2, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 9, s.unscaled)
-		assert.EqualValues(t, 3, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 6, s.unscaled)
-		assert.EqualValues(t, 2, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 2, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 0, s.unscaled)
-		assert.EqualValues(t, 0, s.scaled)
-
-		s.next()
-		assert.EqualValues(t, 2, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.goTo(6)
-		assert.EqualValues(t, 6, s.unscaled)
-		assert.EqualValues(t, 2, s.scaled)
-
-		s.goTo(5)
-		assert.EqualValues(t, 2, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.goTo(7)
-		assert.EqualValues(t, 6, s.unscaled)
-		assert.EqualValues(t, 2, s.scaled)
-
-		s.goTo(8)
-		assert.EqualValues(t, 6, s.unscaled)
-		assert.EqualValues(t, 2, s.scaled)
-
-		s.goTo(9)
-		assert.EqualValues(t, 9, s.unscaled)
-		assert.EqualValues(t, 3, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 6, s.unscaled)
-		assert.EqualValues(t, 2, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 2, s.unscaled)
-		assert.EqualValues(t, 1, s.scaled)
-
-		s.prev()
-		assert.EqualValues(t, 0, s.unscaled)
-		assert.EqualValues(t, 0, s.scaled)
-	})
-}
-
 // TODO: delete in favor of lib.generateRandomSequence() after
-// https://github.com/loadimpact/k6/issues/1302 is done (can't import now due to
+// https://github.com/k6io/k6/issues/1302 is done (can't import now due to
 // import loops...)
 func generateRandomSequence(t testing.TB, n, m int64, r *rand.Rand) lib.ExecutionSegmentSequence {
 	var err error
@@ -1215,10 +1027,6 @@ func generateRandomSequence(t testing.TB, n, m int64, r *rand.Rand) lib.Executio
 func TestSumRandomSegmentSequenceMatchesNoSegment(t *testing.T) {
 	t.Parallel()
 
-	seed := time.Now().UnixNano()
-	r := rand.New(rand.NewSource(seed))
-	t.Logf("Random source seeded with %d\n", seed)
-
 	const (
 		numTests         = 10
 		maxStages        = 10
@@ -1228,7 +1036,7 @@ func TestSumRandomSegmentSequenceMatchesNoSegment(t *testing.T) {
 		segmentSeqMaxLen = 15
 		maxNumerator     = 300
 	)
-	getTestConfig := func(name string) RampingVUsConfig {
+	getTestConfig := func(r *rand.Rand, name string) RampingVUsConfig {
 		stagesCount := 1 + r.Int31n(maxStages)
 		stages := make([]Stage, stagesCount)
 		for s := int32(0); s < stagesCount; s++ {
@@ -1274,7 +1082,11 @@ func TestSumRandomSegmentSequenceMatchesNoSegment(t *testing.T) {
 	for i := 0; i < numTests; i++ {
 		name := fmt.Sprintf("random%02d", i)
 		t.Run(name, func(t *testing.T) {
-			c := getTestConfig(name)
+			t.Parallel()
+			seed := time.Now().UnixNano()
+			r := rand.New(rand.NewSource(seed)) //nolint:gosec
+			t.Logf("Random source seeded with %d\n", seed)
+			c := getTestConfig(r, name)
 			ranSeqLen := 2 + r.Int63n(segmentSeqMaxLen-1)
 			t.Logf("Config: %#v, ranSeqLen: %d", c, ranSeqLen)
 			randomSequence := generateRandomSequence(t, ranSeqLen, maxNumerator, r)

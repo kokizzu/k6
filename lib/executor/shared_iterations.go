@@ -30,11 +30,11 @@ import (
 	"github.com/sirupsen/logrus"
 	"gopkg.in/guregu/null.v3"
 
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/metrics"
-	"github.com/loadimpact/k6/lib/types"
-	"github.com/loadimpact/k6/stats"
-	"github.com/loadimpact/k6/ui/pb"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/metrics"
+	"go.k6.io/k6/lib/types"
+	"go.k6.io/k6/stats"
+	"go.k6.io/k6/ui/pb"
 )
 
 const sharedIterationsType = "shared-iterations"
@@ -176,6 +176,8 @@ func (si *SharedIterations) Init(ctx context.Context) error {
 	// with no work, as determined by their config's HasWork() method.
 	et, err := si.BaseExecutor.executionState.ExecutionTuple.GetNewExecutionTupleFromValue(si.config.VUs.Int64)
 	si.et = et
+	si.iterSegIndex = lib.NewSegmentedIndex(et)
+
 	return err
 }
 
@@ -232,15 +234,24 @@ func (si SharedIterations) Run(parentCtx context.Context, out chan<- stats.Sampl
 	regDurationDone := regDurationCtx.Done()
 	runIteration := getIterationRunner(si.executionState, si.logger)
 
+	maxDurationCtx = lib.WithScenarioState(maxDurationCtx, &lib.ScenarioState{
+		Name:       si.config.Name,
+		Executor:   si.config.Type,
+		StartTime:  startTime,
+		ProgressFn: progressFn,
+	})
+
 	returnVU := func(u lib.InitializedVU) {
 		si.executionState.ReturnVU(u, true)
 		activeVUs.Done()
 	}
+
 	handleVU := func(initVU lib.InitializedVU) {
 		ctx, cancel := context.WithCancel(maxDurationCtx)
 		defer cancel()
 
-		activeVU := initVU.Activate(getVUActivationParams(ctx, si.config.BaseConfig, returnVU))
+		activeVU := initVU.Activate(getVUActivationParams(
+			ctx, si.config.BaseConfig, returnVU, si.nextIterationCounters))
 
 		for {
 			select {

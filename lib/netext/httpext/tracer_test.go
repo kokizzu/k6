@@ -41,10 +41,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/loadimpact/k6/lib/metrics"
-	"github.com/loadimpact/k6/lib/netext"
-	"github.com/loadimpact/k6/lib/types"
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/lib/metrics"
+	"go.k6.io/k6/lib/netext"
+	"go.k6.io/k6/lib/types"
+	"go.k6.io/k6/stats"
 )
 
 const traceDelay = 100 * time.Millisecond
@@ -273,7 +273,7 @@ func TestTracerError(t *testing.T) {
 func TestCancelledRequest(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewTLSServer(httpbin.New().Handler())
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	cancelTest := func(t *testing.T) {
 		t.Parallel()
@@ -297,6 +297,7 @@ func TestCancelledRequest(t *testing.T) {
 
 	// This Run will not return until the parallel subtests complete.
 	t.Run("group", func(t *testing.T) {
+		t.Parallel()
 		for i := 0; i < 200; i++ {
 			t.Run(fmt.Sprintf("TestCancelledRequest_%d", i), cancelTest)
 		}

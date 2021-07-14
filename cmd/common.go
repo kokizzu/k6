@@ -30,7 +30,7 @@ import (
 	"github.com/spf13/pflag"
 	"gopkg.in/guregu/null.v3"
 
-	"github.com/loadimpact/k6/lib/types"
+	"go.k6.io/k6/lib/types"
 )
 
 // Use these when interacting with fs and writing to terminal, makes a command testable
@@ -42,14 +42,6 @@ func must(err error) {
 	if err != nil {
 		panic(err)
 	}
-}
-
-// ExitCode wraps the error with an exit code.
-// Hint is used to show details information about underlying error.
-type ExitCode struct {
-	error
-	Code int
-	Hint string
 }
 
 //TODO: refactor the CLI config so these functions aren't needed - they

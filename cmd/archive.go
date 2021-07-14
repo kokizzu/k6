@@ -28,7 +28,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/loadimpact/k6/loader"
+	"go.k6.io/k6/loader"
 )
 
 var archiveOut = "archive.tar"
@@ -80,8 +80,9 @@ An archive is a fully self-contained test run, and can be executed identically e
 				return err
 			}
 
-			if _, cerr := deriveAndValidateConfig(conf, r.IsExecutable); cerr != nil {
-				return ExitCode{error: cerr, Code: invalidConfigErrorCode}
+			_, err = deriveAndValidateConfig(conf, r.IsExecutable)
+			if err != nil {
+				return err
 			}
 
 			err = r.SetOptions(conf.Options)

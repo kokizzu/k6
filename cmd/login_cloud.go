@@ -26,15 +26,16 @@ import (
 	"os"
 	"syscall"
 
+	"github.com/fatih/color"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh/terminal"
 	"gopkg.in/guregu/null.v3"
 
-	"github.com/loadimpact/k6/cloudapi"
-	"github.com/loadimpact/k6/lib/consts"
-	"github.com/loadimpact/k6/ui"
+	"go.k6.io/k6/cloudapi"
+	"go.k6.io/k6/lib/consts"
+	"go.k6.io/k6/ui"
 )
 
 //nolint:funlen
@@ -141,7 +142,8 @@ This will set the default token used when just "k6 run -o cloud" is passed.`,
 			}
 
 			if newCloudConf.Token.Valid {
-				fprintf(stdout, "  token: %s\n", ui.ValueColor.Sprint(newCloudConf.Token.String))
+				valueColor := getColor(noColor || !stdoutTTY, color.FgCyan)
+				fprintf(stdout, "  token: %s\n", valueColor.Sprint(newCloudConf.Token.String))
 			}
 			return nil
 		},

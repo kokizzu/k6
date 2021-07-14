@@ -29,7 +29,7 @@ import (
 	"github.com/dop251/goja"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/loadimpact/k6/js/common"
+	"go.k6.io/k6/js/common"
 )
 
 func makeRuntime() *goja.Runtime {
@@ -150,7 +150,7 @@ func TestParse(t *testing.T) {
 		_, err := rt.RunString(`
 		x509.parse("bad-certificate");`)
 		assert.Contains(
-			t, err.Error(), "GoError: failed to decode certificate PEM file")
+			t, err.Error(), "failed to decode certificate PEM file")
 	})
 
 	t.Run("ParseFailure", func(t *testing.T) {
@@ -160,7 +160,7 @@ func TestParse(t *testing.T) {
 		if assert.Error(t, err) {
 			assert.Contains(t,
 				err.Error(),
-				"GoError: failed to parse certificate",
+				"failed to parse certificate",
 			)
 		}
 	})

@@ -42,12 +42,12 @@ import (
 	"google.golang.org/grpc/test/grpc_testing"
 	"gopkg.in/guregu/null.v3"
 
-	"github.com/loadimpact/k6/js/common"
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/fsext"
-	"github.com/loadimpact/k6/lib/metrics"
-	"github.com/loadimpact/k6/lib/testutils/httpmultibin"
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/js/common"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/fsext"
+	"go.k6.io/k6/lib/metrics"
+	"go.k6.io/k6/lib/testutils/httpmultibin"
+	"go.k6.io/k6/stats"
 )
 
 const isWindows = runtime.GOOS == "windows"
@@ -72,7 +72,6 @@ func assertMetricEmitted(t *testing.T, metric *stats.Metric, sampleContainers []
 func TestClient(t *testing.T) {
 	t.Parallel()
 	tb := httpmultibin.NewHTTPMultiBin(t)
-	defer tb.Cleanup()
 	sr := tb.Replacer.Replace
 
 	root, err := lib.NewGroup("", nil)
@@ -142,9 +141,7 @@ func TestClient(t *testing.T) {
 		respV, err := rt.RunString(`
 			client.load([], "../../../../vendor/google.golang.org/grpc/test/grpc_testing/test.proto");
 		`)
-		if !assert.NoError(t, err) {
-			return
-		}
+		require.NoError(t, err)
 		resp := respV.Export()
 		assert.IsType(t, []MethodInfo{}, resp)
 		assert.Len(t, resp, 6)

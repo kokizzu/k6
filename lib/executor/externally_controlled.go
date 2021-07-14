@@ -32,10 +32,10 @@ import (
 	"github.com/sirupsen/logrus"
 	"gopkg.in/guregu/null.v3"
 
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/types"
-	"github.com/loadimpact/k6/stats"
-	"github.com/loadimpact/k6/ui/pb"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/types"
+	"go.k6.io/k6/stats"
+	"go.k6.io/k6/ui/pb"
 )
 
 const externallyControlledType = "externally-controlled"
@@ -361,7 +361,9 @@ func (rs *externallyControlledRunState) newManualVUHandle(
 	}
 	ctx, cancel := context.WithCancel(rs.ctx)
 	return &manualVUHandle{
-		vuHandle: newStoppedVUHandle(ctx, getVU, returnVU, &rs.executor.config.BaseConfig, logger),
+		vuHandle: newStoppedVUHandle(ctx, getVU, returnVU,
+			rs.executor.nextIterationCounters,
+			&rs.executor.config.BaseConfig, logger),
 		initVU:   initVU,
 		wg:       &wg,
 		cancelVU: cancel,
@@ -535,6 +537,13 @@ func (mex *ExternallyControlled) Run(parentCtx context.Context, out chan<- stats
 	if err = runState.retrieveStartMaxVUs(); err != nil {
 		return err
 	}
+
+	ctx = lib.WithScenarioState(ctx, &lib.ScenarioState{
+		Name:       mex.config.Name,
+		Executor:   mex.config.Type,
+		StartTime:  time.Now(),
+		ProgressFn: runState.progressFn,
+	})
 
 	mex.progress.Modify(pb.WithProgress(runState.progressFn)) // Keep track of the progress
 	go trackProgress(parentCtx, ctx, ctx, mex, runState.progressFn)

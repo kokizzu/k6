@@ -31,8 +31,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/loadimpact/k6/js/common"
-	"github.com/loadimpact/k6/lib"
+	"go.k6.io/k6/js/common"
+	"go.k6.io/k6/lib"
 )
 
 type MockReader struct{}
@@ -54,9 +54,9 @@ func TestCryptoAlgorithms(t *testing.T) {
 
 	t.Run("RandomBytesSuccess", func(t *testing.T) {
 		_, err := rt.RunString(`
-		var bytes = crypto.randomBytes(5);
-		if (bytes.length !== 5) {
-			throw new Error("Incorrect size: " + bytes.length);
+		var buf = crypto.randomBytes(5);
+		if (buf.byteLength !== 5) {
+			throw new Error("Incorrect size: " + buf.byteLength);
 		}`)
 
 		assert.NoError(t, err)
@@ -303,7 +303,7 @@ func TestOutputEncoding(t *testing.T) {
 		  return true;
 		}
 
-		var resultBinary = hasher.digest("binary");
+		var resultBinary = new Uint8Array(hasher.digest("binary"));
 		if (!arraysEqual(resultBinary,  correctBinary)) {
 			throw new Error("Binary encoding mismatch: " + JSON.stringify(resultBinary));
 		}
@@ -318,7 +318,7 @@ func TestOutputEncoding(t *testing.T) {
 		hasher.update("hello world");
 		hasher.digest("someInvalidEncoding");
 		`)
-		assert.Contains(t, err.Error(), "GoError: Invalid output encoding: someInvalidEncoding")
+		assert.Contains(t, err.Error(), "Invalid output encoding: someInvalidEncoding")
 	})
 }
 
@@ -409,7 +409,7 @@ func TestHMac(t *testing.T) {
 				throw new Error("Hex encoding mismatch: " + resultHex);
 			}`)
 
-			assert.Contains(t, err.Error(), "GoError: Invalid algorithm: "+algorithm)
+			assert.Contains(t, err.Error(), "Invalid algorithm: "+algorithm)
 		})
 
 		t.Run(algorithm+" wrapper: invalid", func(t *testing.T) {
@@ -419,7 +419,7 @@ func TestHMac(t *testing.T) {
 				throw new Error("Hex encoding mismatch: " + resultHex);
 			}`)
 
-			assert.Contains(t, err.Error(), "GoError: Invalid algorithm: "+algorithm)
+			assert.Contains(t, err.Error(), "Invalid algorithm: "+algorithm)
 		})
 	}
 }
@@ -450,9 +450,8 @@ func TestHexEncodeError(t *testing.T) {
 		err := recover()
 		require.NotNil(t, err)
 		require.IsType(t, &goja.Object{}, err)
-		require.IsType(t, map[string]interface{}{}, err.(*goja.Object).Export())
-		val := err.(*goja.Object).Export().(map[string]interface{})
-		assert.Equal(t, expErr, fmt.Sprintf("%s", val["value"]))
+		val := err.(*goja.Object).Export()
+		require.EqualError(t, val.(error), expErr)
 	}()
 
 	c := New()

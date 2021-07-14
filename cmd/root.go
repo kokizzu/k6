@@ -22,6 +22,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -32,27 +33,26 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/mattn/go-colorable"
 	"github.com/mattn/go-isatty"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/loadimpact/k6/lib/consts"
-	"github.com/loadimpact/k6/log"
+	"go.k6.io/k6/errext"
+	"go.k6.io/k6/lib/consts"
+	"go.k6.io/k6/log"
 )
-
-var BannerColor = color.New(color.FgCyan)
 
 //TODO: remove these global variables
 //nolint:gochecknoglobals
 var (
-	outMutex  = &sync.Mutex{}
-	stdoutTTY = isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
-	stderrTTY = isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd())
-	stdout    = &consoleWriter{colorable.NewColorableStdout(), stdoutTTY, outMutex, nil}
-	stderr    = &consoleWriter{colorable.NewColorableStderr(), stderrTTY, outMutex, nil}
+	outMutex   = &sync.Mutex{}
+	isDumbTerm = os.Getenv("TERM") == "dumb"
+	stdoutTTY  = !isDumbTerm && (isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd()))
+	stderrTTY  = !isDumbTerm && (isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd()))
+	stdout     = &consoleWriter{colorable.NewColorableStdout(), stdoutTTY, outMutex, nil}
+	stderr     = &consoleWriter{colorable.NewColorableStderr(), stderrTTY, outMutex, nil}
 )
 
 const (
@@ -97,7 +97,7 @@ func newRootCommand(ctx context.Context, logger *logrus.Logger, fallbackLogger l
 	c.cmd = &cobra.Command{
 		Use:               "k6",
 		Short:             "a next-generation load generator",
-		Long:              BannerColor.Sprintf("\n%s", consts.Banner()),
+		Long:              "\n" + getBanner(noColor || !stdoutTTY),
 		SilenceUsage:      true,
 		SilenceErrors:     true,
 		PersistentPreRunE: c.persistentPreRunE,
@@ -136,22 +136,6 @@ func (c *rootCommand) persistentPreRunE(cmd *cobra.Command, args []string) error
 		c.loggerIsRemote = true
 	}
 
-	if noColor {
-		// TODO: figure out something else... currently, with the wrappers
-		// below, we're stripping any colors from the output after we've
-		// added them. The problem is that, besides being very inefficient,
-		// this actually also strips other special characters from the
-		// intended output, like the progressbar formatting ones, which
-		// would otherwise be fine (in a TTY).
-		//
-		// It would be much better if we avoid messing with the output and
-		// instead have a parametrized instance of the color library. It
-		// will return colored output if colors are enabled and simply
-		// return the passed input as-is (i.e. be a noop) if colors are
-		// disabled...
-		stdout.Writer = colorable.NewNonColorable(os.Stdout)
-		stderr.Writer = colorable.NewNonColorable(os.Stderr)
-	}
 	stdlog.SetOutput(c.logger.Writer())
 	c.logger.Debugf("k6 version: v%s", consts.FullVersion())
 	return nil
@@ -196,23 +180,32 @@ func Execute() {
 	)
 
 	if err := c.cmd.Execute(); err != nil {
-		fields := logrus.Fields{}
-		code := -1
-		if e, ok := err.(ExitCode); ok {
-			code = e.Code
-			if e.Hint != "" {
-				fields["hint"] = e.Hint
-			}
+		exitCode := -1
+		var ecerr errext.HasExitCode
+		if errors.As(err, &ecerr) {
+			exitCode = int(ecerr.ExitCode())
 		}
 
-		logger.WithFields(fields).Error(err)
+		errText := err.Error()
+		var xerr errext.Exception
+		if errors.As(err, &xerr) {
+			errText = xerr.StackTrace()
+		}
+
+		fields := logrus.Fields{}
+		var herr errext.HasHint
+		if errors.As(err, &herr) {
+			fields["hint"] = herr.Hint()
+		}
+
+		logger.WithFields(fields).Error(errText)
 		if c.loggerIsRemote {
-			fallbackLogger.WithFields(fields).Error(err)
+			fallbackLogger.WithFields(fields).Error(errText)
 			cancel()
 			c.waitRemoteLogger()
 		}
 
-		os.Exit(code)
+		os.Exit(exitCode) //nolint:gocritic
 	}
 
 	cancel()
@@ -232,7 +225,7 @@ func (c *rootCommand) waitRemoteLogger() {
 func (c *rootCommand) rootCmdPersistentFlagSet() *pflag.FlagSet {
 	flags := pflag.NewFlagSet("", pflag.ContinueOnError)
 	// TODO: figure out a better way to handle the CLI flags - global variables are not very testable... :/
-	flags.BoolVarP(&c.verbose, "verbose", "v", false, "enable debug logging")
+	flags.BoolVarP(&c.verbose, "verbose", "v", false, "enable verbose logging")
 	flags.BoolVarP(&quiet, "quiet", "q", false, "disable progress updates")
 	flags.BoolVar(&noColor, "no-color", false, "disable colored output")
 	flags.StringVar(&c.logOutput, "log-output", "stderr",
@@ -276,10 +269,14 @@ func (c *rootCommand) setupLoggers() (<-chan struct{}, error) {
 	if c.verbose {
 		c.logger.SetLevel(logrus.DebugLevel)
 	}
+
+	loggerForceColors := false // disable color by default
 	switch c.logOutput {
 	case "stderr":
+		loggerForceColors = !noColor && stderrTTY
 		c.logger.SetOutput(stderr)
 	case "stdout":
+		loggerForceColors = !noColor && stdoutTTY
 		c.logger.SetOutput(stdout)
 	case "none":
 		c.logger.SetOutput(ioutil.Discard)
@@ -295,7 +292,6 @@ func (c *rootCommand) setupLoggers() (<-chan struct{}, error) {
 		c.logger.AddHook(hook)
 		c.logger.SetOutput(ioutil.Discard) // don't output to anywhere else
 		c.logFmt = "raw"
-		noColor = true // disable color
 	}
 
 	switch c.logFmt {
@@ -306,7 +302,7 @@ func (c *rootCommand) setupLoggers() (<-chan struct{}, error) {
 		c.logger.SetFormatter(&logrus.JSONFormatter{})
 		c.logger.Debug("Logger format: JSON")
 	default:
-		c.logger.SetFormatter(&logrus.TextFormatter{ForceColors: stderrTTY, DisableColors: noColor})
+		c.logger.SetFormatter(&logrus.TextFormatter{ForceColors: loggerForceColors, DisableColors: noColor})
 		c.logger.Debug("Logger format: TEXT")
 	}
 	return ch, nil

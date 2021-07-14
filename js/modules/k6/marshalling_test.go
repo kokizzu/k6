@@ -29,18 +29,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/loadimpact/k6/js"
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/testutils"
-	"github.com/loadimpact/k6/lib/testutils/httpmultibin"
-	"github.com/loadimpact/k6/lib/types"
-	"github.com/loadimpact/k6/loader"
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/js"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/testutils"
+	"go.k6.io/k6/lib/testutils/httpmultibin"
+	"go.k6.io/k6/lib/types"
+	"go.k6.io/k6/loader"
+	"go.k6.io/k6/stats"
 )
 
 func TestSetupDataMarshalling(t *testing.T) {
+	t.Parallel()
 	tb := httpmultibin.NewHTTPMultiBin(t)
-	defer tb.Cleanup()
 
 	script := []byte(tb.Replacer.Replace(`
 		import http from "k6/http";
@@ -137,7 +137,7 @@ func TestSetupDataMarshalling(t *testing.T) {
 	if !assert.NoError(t, runner.Setup(context.Background(), samples)) {
 		return
 	}
-	initVU, err := runner.NewVU(1, samples)
+	initVU, err := runner.NewVU(1, 1, samples)
 	if assert.NoError(t, err) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()

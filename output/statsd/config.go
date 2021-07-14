@@ -27,8 +27,8 @@ import (
 	"github.com/kelseyhightower/envconfig"
 	"gopkg.in/guregu/null.v3"
 
-	"github.com/loadimpact/k6/lib/types"
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/lib/types"
+	"go.k6.io/k6/stats"
 )
 
 // config defines the StatsD configuration.
@@ -82,7 +82,7 @@ func newConfig() config {
 		BufferSize:   null.NewInt(20, false),
 		Namespace:    null.NewString("k6.", false),
 		PushInterval: types.NewNullDuration(1*time.Second, false),
-		TagBlocklist: stats.TagSet{},
+		TagBlocklist: (stats.TagVU | stats.TagIter | stats.TagURL).Map(),
 		EnableTags:   null.NewBool(false, false),
 	}
 }

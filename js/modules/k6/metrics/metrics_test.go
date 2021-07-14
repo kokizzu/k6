@@ -29,9 +29,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/loadimpact/k6/js/common"
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/js/common"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/stats"
 )
 
 func TestMetrics(t *testing.T) {
@@ -81,14 +81,12 @@ func TestMetrics(t *testing.T) {
 						isTimeString = `, true`
 					}
 					_, err := rt.RunString(fmt.Sprintf(`var m = new metrics.%s("my_metric"%s)`, fn, isTimeString))
-					if !assert.NoError(t, err) {
-						return
-					}
+					require.NoError(t, err)
 
 					t.Run("ExitInit", func(t *testing.T) {
 						*ctxPtr = lib.WithState(*ctxPtr, state)
 						_, err := rt.RunString(fmt.Sprintf(`new metrics.%s("my_metric")`, fn))
-						assert.EqualError(t, err, "GoError: metrics must be declared in the init context at apply (native)")
+						assert.EqualError(t, err, "metrics must be declared in the init context at apply (native)")
 					})
 
 					groups := map[string]*lib.Group{
@@ -170,4 +168,27 @@ func TestMetricNames(t *testing.T) {
 			assert.Equal(t, value, checkName(key), key)
 		})
 	}
+}
+
+func TestMetricGetName(t *testing.T) {
+	t.Parallel()
+	rt := goja.New()
+	rt.SetFieldNameMapper(common.FieldNameMapper{})
+
+	ctxPtr := new(context.Context)
+	*ctxPtr = common.WithRuntime(context.Background(), rt)
+	require.NoError(t, rt.Set("metrics", common.Bind(rt, New(), ctxPtr)))
+	v, err := rt.RunString(`
+		var m = new metrics.Counter("my_metric")
+		m.name
+	`)
+	require.NoError(t, err)
+	require.Equal(t, "my_metric", v.String())
+
+	_, err = rt.RunString(`
+		"use strict";
+		m.name = "something"
+	`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "TypeError: Cannot assign to read only property 'name'")
 }

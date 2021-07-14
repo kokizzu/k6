@@ -28,10 +28,10 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/testutils"
-	"github.com/loadimpact/k6/lib/testutils/minirunner"
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/testutils"
+	"go.k6.io/k6/lib/testutils/minirunner"
+	"go.k6.io/k6/stats"
 )
 
 func simpleRunner(vuFn func(context.Context) error) lib.Runner {
@@ -42,7 +42,7 @@ func simpleRunner(vuFn func(context.Context) error) lib.Runner {
 	}
 }
 
-func setupExecutor(t *testing.T, config lib.ExecutorConfig, es *lib.ExecutionState, runner lib.Runner) (
+func setupExecutor(t testing.TB, config lib.ExecutorConfig, es *lib.ExecutionState, runner lib.Runner) (
 	context.Context, context.CancelFunc, lib.Executor, *testutils.SimpleLogrusHook,
 ) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -55,7 +55,8 @@ func setupExecutor(t *testing.T, config lib.ExecutorConfig, es *lib.ExecutionSta
 	logEntry := logrus.NewEntry(testLog)
 
 	initVUFunc := func(_ context.Context, logger *logrus.Entry) (lib.InitializedVU, error) {
-		return runner.NewVU(int64(es.GetUniqueVUIdentifier()), engineOut)
+		idl, idg := es.GetUniqueVUIdentifiers()
+		return runner.NewVU(idl, idg, engineOut)
 	}
 	es.SetInitVUFunc(initVUFunc)
 

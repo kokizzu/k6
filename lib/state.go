@@ -31,7 +31,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
 
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/stats"
 )
 
 // DialContexter is an interface that can dial with a context
@@ -67,8 +67,20 @@ type State struct {
 	// TODO: maybe use https://golang.org/pkg/sync/#Pool ?
 	BPool *bpool.BufferPool
 
-	Vu, Iteration int64
-	Tags          map[string]string
+	VUID, VUIDGlobal uint64
+	Iteration        int64
+	Tags             map[string]string
+	// These will be assigned on VU activation.
+	// Returns the iteration number of this VU in the current scenario.
+	GetScenarioVUIter func() uint64
+	// Returns the iteration number across all VUs in the current scenario
+	// unique to this single k6 instance.
+	// TODO: Maybe this doesn't belong here but in ScenarioState?
+	GetScenarioLocalVUIter func() uint64
+	// Returns the iteration number across all VUs in the current scenario
+	// unique globally across k6 instances (taking into account execution
+	// segments).
+	GetScenarioGlobalVUIter func() uint64
 }
 
 // CloneTags makes a copy of the tags map and returns it.

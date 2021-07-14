@@ -25,15 +25,17 @@ import (
 	"io/ioutil"
 	"testing"
 
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/testutils"
-	"github.com/loadimpact/k6/stats"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/testutils"
+	"go.k6.io/k6/stats"
 )
 
 func TestNewSharedArrayIntegration(t *testing.T) {
+	t.Parallel()
 	data := `'use strict';
 var SharedArray = require("k6/data").SharedArray;
 function generateArray() {
@@ -93,7 +95,7 @@ exports.default = function() {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			samples := make(chan stats.SampleContainer, 100)
-			initVU, err := r.NewVU(1, samples)
+			initVU, err := r.NewVU(1, 1, samples)
 			if assert.NoError(t, err) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()

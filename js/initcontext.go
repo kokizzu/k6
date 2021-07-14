@@ -26,17 +26,18 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/dop251/goja"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/afero"
 
-	"github.com/loadimpact/k6/js/common"
-	"github.com/loadimpact/k6/js/compiler"
-	"github.com/loadimpact/k6/js/modules"
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/loader"
+	"go.k6.io/k6/js/common"
+	"go.k6.io/k6/js/compiler"
+	"go.k6.io/k6/js/modules"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/loader"
 )
 
 type programWithSource struct {
@@ -161,6 +162,12 @@ func (i *InitContext) requireFile(name string) (goja.Value, error) {
 	// First, check if we have a cached program already.
 	pgm, ok := i.programs[fileURL.String()]
 	if !ok || pgm.module == nil {
+		if filepath.IsAbs(name) && runtime.GOOS == "windows" {
+			i.logger.Warnf("'%s' was imported with an absolute path - this won't be cross-platform and won't work if"+
+				" you move the script between machines or run it with `k6 cloud`; if absolute paths are required,"+
+				" import them with the `file://` schema for slightly better compatibility",
+				name)
+		}
 		i.pwd = loader.Dir(fileURL)
 		defer func() { i.pwd = pwd }()
 		exports := i.runtime.NewObject()
@@ -207,8 +214,9 @@ func (i *InitContext) compileImport(src, filename string) (*goja.Program, error)
 	return pgm, err
 }
 
-// Open implements open() in the init context and will read and return the contents of a file.
-// If the second argument is "b" it returns the data as a binary array, otherwise as a string.
+// Open implements open() in the init context and will read and return the
+// contents of a file. If the second argument is "b" it returns an ArrayBuffer
+// instance, otherwise a string representation.
 func (i *InitContext) Open(ctx context.Context, filename string, args ...string) (goja.Value, error) {
 	if lib.GetState(ctx) != nil {
 		return nil, errors.New(openCantBeUsedOutsideInitContextMsg)
@@ -242,7 +250,8 @@ func (i *InitContext) Open(ctx context.Context, filename string, args ...string)
 	}
 
 	if len(args) > 0 && args[0] == "b" {
-		return i.runtime.ToValue(data), nil
+		ab := i.runtime.NewArrayBuffer(data)
+		return i.runtime.ToValue(&ab), nil
 	}
 	return i.runtime.ToValue(string(data)), nil
 }

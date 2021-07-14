@@ -48,13 +48,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/guregu/null.v3"
 
-	"github.com/loadimpact/k6/js/common"
-	"github.com/loadimpact/k6/js/compiler"
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/metrics"
-	"github.com/loadimpact/k6/lib/testutils"
-	"github.com/loadimpact/k6/lib/testutils/httpmultibin"
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/js/common"
+	"go.k6.io/k6/js/compiler"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/metrics"
+	"go.k6.io/k6/lib/testutils"
+	"go.k6.io/k6/lib/testutils/httpmultibin"
+	"go.k6.io/k6/stats"
 )
 
 // runES6String Runs an ES6 string in the given runtime. Use this rather than writing ES5 in tests.
@@ -201,7 +201,6 @@ func newRuntime(
 func TestRequestAndBatch(t *testing.T) {
 	t.Parallel()
 	tb, state, samples, rt, ctx := newRuntime(t)
-	defer tb.Cleanup()
 	sr := tb.Replacer.Replace
 
 	// Handle paths with custom logic
@@ -327,7 +326,7 @@ func TestRequestAndBatch(t *testing.T) {
 			`))
 			endTime := time.Now()
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "context deadline exceeded")
+			assert.Contains(t, err.Error(), "request timeout")
 			assert.WithinDuration(t, startTime.Add(1*time.Second), endTime, 2*time.Second)
 
 			logEntry := hook.LastEntry()
@@ -345,7 +344,7 @@ func TestRequestAndBatch(t *testing.T) {
 			`))
 			endTime := time.Now()
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "context deadline exceeded")
+			assert.Contains(t, err.Error(), "request timeout")
 			assert.WithinDuration(t, startTime.Add(1*time.Second), endTime, 2*time.Second)
 
 			logEntry := hook.LastEntry()
@@ -573,6 +572,79 @@ func TestRequestAndBatch(t *testing.T) {
 			}
 		})
 	})
+	t.Run("InvalidURL", func(t *testing.T) {
+		t.Parallel()
+
+		expErr := `invalid URL: parse "https:// test.k6.io": invalid character " " in host name`
+		t.Run("throw=true", func(t *testing.T) {
+			js := `
+				http.request("GET", "https:// test.k6.io");
+				throw new Error("whoops!"); // shouldn't be reached
+			`
+			_, err := rt.RunString(js)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), expErr)
+		})
+
+		t.Run("throw=false", func(t *testing.T) {
+			state.Options.Throw.Bool = false
+			defer func() { state.Options.Throw.Bool = true }()
+
+			hook := logtest.NewLocal(state.Logger)
+			defer hook.Reset()
+
+			js := `
+				(function(){
+					var r = http.request("GET", "https:// test.k6.io");
+	                return {error: r.error, error_code: r.error_code};
+				})()
+			`
+			ret, err := rt.RunString(js)
+			require.NoError(t, err)
+			require.NotNil(t, ret)
+			var retobj map[string]interface{}
+			var ok bool
+			if retobj, ok = ret.Export().(map[string]interface{}); !ok {
+				require.Fail(t, "got wrong return object: %#+v", retobj)
+			}
+			require.Equal(t, int64(1020), retobj["error_code"])
+			require.Equal(t, expErr, retobj["error"])
+
+			logEntry := hook.LastEntry()
+			require.NotNil(t, logEntry)
+			assert.Equal(t, logrus.WarnLevel, logEntry.Level)
+			assert.Contains(t, logEntry.Data["error"].(error).Error(), expErr)
+			assert.Equal(t, "Request Failed", logEntry.Message)
+		})
+
+		t.Run("throw=false,nopanic", func(t *testing.T) {
+			state.Options.Throw.Bool = false
+			defer func() { state.Options.Throw.Bool = true }()
+
+			hook := logtest.NewLocal(state.Logger)
+			defer hook.Reset()
+
+			js := `
+				(function(){
+					var r = http.request("GET", "https:// test.k6.io");
+					r.html();
+					r.json();
+	                return r.error_code; // not reached because of json()
+				})()
+			`
+			ret, err := rt.RunString(js)
+			require.Error(t, err)
+			assert.Nil(t, ret)
+			assert.Contains(t, err.Error(), "unexpected end of JSON input")
+
+			logEntry := hook.LastEntry()
+			require.NotNil(t, logEntry)
+			assert.Equal(t, logrus.WarnLevel, logEntry.Level)
+			assert.Contains(t, logEntry.Data["error"].(error).Error(), expErr)
+			assert.Equal(t, "Request Failed", logEntry.Message)
+		})
+	})
+
 	t.Run("Unroutable", func(t *testing.T) {
 		_, err := rt.RunString(`http.request("GET", "http://sdafsgdhfjg/");`)
 		assert.Error(t, err)
@@ -1154,10 +1226,14 @@ func TestRequestAndBatch(t *testing.T) {
 
 			t.Run("object", func(t *testing.T) {
 				_, err := rt.RunString(fmt.Sprintf(sr(`
-				var res = http.%s("HTTPBIN_URL/%s", {a: "a", b: 2});
+				var equalArray = function(a, b) {
+					return a.length === b.length && a.every(function(v, i) { return v === b[i]});
+				}
+				var res = http.%s("HTTPBIN_URL/%s", {a: "a", b: 2, c: ["one", "two"]});
 				if (res.status != 200) { throw new Error("wrong status: " + res.status); }
 				if (res.json().form.a != "a") { throw new Error("wrong a=: " + res.json().form.a); }
 				if (res.json().form.b != "2") { throw new Error("wrong b=: " + res.json().form.b); }
+				if (!equalArray(res.json().form.c, ["one", "two"])) { throw new Error("wrong c: " + res.json().form.c); }
 				if (res.json().headers["Content-Type"] != "application/x-www-form-urlencoded") { throw new Error("wrong content type: " + res.json().headers["Content-Type"]); }
 				`), fn, strings.ToLower(method)))
 				assert.NoError(t, err)
@@ -1179,8 +1255,132 @@ func TestRequestAndBatch(t *testing.T) {
 
 	t.Run("Batch", func(t *testing.T) {
 		t.Run("error", func(t *testing.T) {
-			_, err := rt.RunString(`var res = http.batch("https://somevalidurl.com");`)
-			require.Error(t, err)
+			invalidURLerr := `invalid URL: parse "https:// invalidurl.com": invalid character " " in host name`
+			testCases := []struct {
+				name, code, expErr string
+				throw              bool
+			}{
+				{
+					name: "invalid arg", code: `"https://somevalidurl.com"`,
+					expErr: `invalid http.batch() argument type string`, throw: true,
+				},
+				{
+					name: "invalid URL short", code: `["https:// invalidurl.com"]`,
+					expErr: invalidURLerr, throw: true,
+				},
+				{
+					name: "invalid URL short no throw", code: `["https:// invalidurl.com"]`,
+					expErr: invalidURLerr, throw: false,
+				},
+				{
+					name: "invalid URL array", code: `[ ["GET", "https:// invalidurl.com"] ]`,
+					expErr: invalidURLerr, throw: true,
+				},
+				{
+					name: "invalid URL array no throw", code: `[ ["GET", "https:// invalidurl.com"] ]`,
+					expErr: invalidURLerr, throw: false,
+				},
+				{
+					name: "invalid URL object", code: `[ {method: "GET", url: "https:// invalidurl.com"} ]`,
+					expErr: invalidURLerr, throw: true,
+				},
+				{
+					name: "invalid object no throw", code: `[ {method: "GET", url: "https:// invalidurl.com"} ]`,
+					expErr: invalidURLerr, throw: false,
+				},
+				{
+					name: "object no url key", code: `[ {method: "GET"} ]`,
+					expErr: `batch request 0 doesn't have a url key`, throw: true,
+				},
+			}
+
+			for _, tc := range testCases {
+				tc := tc
+				t.Run(tc.name, func(t *testing.T) { //nolint:paralleltest
+					oldThrow := state.Options.Throw.Bool
+					state.Options.Throw.Bool = tc.throw
+					defer func() { state.Options.Throw.Bool = oldThrow }()
+
+					hook := logtest.NewLocal(state.Logger)
+					defer hook.Reset()
+
+					ret, err := rt.RunString(fmt.Sprintf(`
+						(function(){
+							var r = http.batch(%s);
+							if (r.length !== 1) throw new Error('unexpected responses length: '+r.length);
+							return {error: r[0].error, error_code: r[0].error_code};
+						})()`, tc.code))
+					if tc.throw {
+						require.Error(t, err)
+						assert.Contains(t, err.Error(), tc.expErr)
+						require.Nil(t, ret)
+					} else {
+						require.NoError(t, err)
+						require.NotNil(t, ret)
+						var retobj map[string]interface{}
+						var ok bool
+						if retobj, ok = ret.Export().(map[string]interface{}); !ok {
+							require.Fail(t, "got wrong return object: %#+v", retobj)
+						}
+						require.Equal(t, int64(1020), retobj["error_code"])
+						require.Equal(t, invalidURLerr, retobj["error"])
+
+						logEntry := hook.LastEntry()
+						require.NotNil(t, logEntry)
+						assert.Equal(t, logrus.WarnLevel, logEntry.Level)
+						assert.Contains(t, logEntry.Data["error"].(error).Error(), tc.expErr)
+						assert.Equal(t, "A batch request failed", logEntry.Message)
+					}
+				})
+			}
+		})
+		t.Run("error,nopanic", func(t *testing.T) { //nolint:paralleltest
+			invalidURLerr := `invalid URL: parse "https:// invalidurl.com": invalid character " " in host name`
+			testCases := []struct{ name, code string }{
+				{
+					name: "array", code: `[
+						["GET", "https:// invalidurl.com"],
+						["GET", "https://somevalidurl.com"],
+					]`,
+				},
+				{
+					name: "object", code: `[
+						{method: "GET", url: "https:// invalidurl.com"},
+						{method: "GET", url: "https://somevalidurl.com"},
+					]`,
+				},
+			}
+
+			for _, tc := range testCases {
+				tc := tc
+				t.Run(tc.name, func(t *testing.T) { //nolint:paralleltest
+					oldThrow := state.Options.Throw.Bool
+					state.Options.Throw.Bool = false
+					defer func() { state.Options.Throw.Bool = oldThrow }()
+
+					hook := logtest.NewLocal(state.Logger)
+					defer hook.Reset()
+
+					ret, err := rt.RunString(fmt.Sprintf(`
+						(function(){
+							var r = http.batch(%s);
+							if (r.length !== 2) throw new Error('unexpected responses length: '+r.length);
+							if (r[1] !== null) throw new Error('expected response at index 1 to be null');
+							r[0].html();
+							r[0].json();
+	            		    return r[0].error_code; // not reached because of json()
+						})()
+					`, tc.code))
+					require.Error(t, err)
+					assert.Nil(t, ret)
+					assert.Contains(t, err.Error(), "unexpected end of JSON input")
+					logEntry := hook.LastEntry()
+					require.NotNil(t, logEntry)
+					assert.Equal(t, logrus.WarnLevel, logEntry.Level)
+					assert.Contains(t, logEntry.Data["error"].(error).Error(), invalidURLerr)
+					assert.Equal(t, "A batch request failed", logEntry.Message)
+				})
+			}
 		})
 		t.Run("GET", func(t *testing.T) {
 			_, err := rt.RunString(sr(`
@@ -1401,7 +1601,6 @@ func TestRequestAndBatch(t *testing.T) {
 func TestRequestArrayBufferBody(t *testing.T) {
 	t.Parallel()
 	tb, _, _, rt, _ := newRuntime(t) //nolint: dogsled
-	defer tb.Cleanup()
 	sr := tb.Replacer.Replace
 
 	tb.Mux.HandleFunc("/post-arraybuffer", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1429,8 +1628,19 @@ func TestRequestArrayBufferBody(t *testing.T) {
 			var res = http.post("HTTPBIN_URL/post-arraybuffer", arr.buffer, { responseType: 'binary' });
 
 			if (res.status != 200) { throw new Error("wrong status: " + res.status) }
-			if (res.body != "%[2]s") { throw new Error(
-				"incorrect data: expected '%[2]s', received '" + res.body + "'") }
+
+			var resTyped = new Uint8Array(res.body);
+			var exp = new %[1]s([%[2]s]);
+			if (exp.length !== resTyped.length) {
+				throw new Error(
+					"incorrect data length: expected " + exp.length + ", received " + resTypedLength)
+			}
+			for (var i = 0; i < exp.length; i++) {
+				if (exp[i] !== resTyped[i])	{
+					throw new Error(
+						"incorrect data at index " + i + ": expected " + exp[i] + ", received " + resTyped[i])
+				}
+			}
 			`, tc.arr, tc.expected)))
 			assert.NoError(t, err)
 		})
@@ -1440,7 +1650,6 @@ func TestRequestArrayBufferBody(t *testing.T) {
 func TestRequestCompression(t *testing.T) {
 	t.Parallel()
 	tb, state, _, rt, _ := newRuntime(t)
-	defer tb.Cleanup()
 
 	logHook := testutils.SimpleLogrusHook{HookedLevels: []logrus.Level{logrus.WarnLevel}}
 	state.Logger.AddHook(&logHook)
@@ -1628,7 +1837,6 @@ func TestRequestCompression(t *testing.T) {
 func TestResponseTypes(t *testing.T) {
 	t.Parallel()
 	tb, state, _, rt, _ := newRuntime(t)
-	defer tb.Cleanup()
 
 	// We don't expect any failed requests
 	state.Options.Throw = null.BoolFrom(true)
@@ -1687,31 +1895,51 @@ func TestResponseTypes(t *testing.T) {
 		}
 
 		// Check binary transmission of the text response as well
-		var respTextInBin = http.get("HTTPBIN_URL/get-text", { responseType: "binary" }).body;
+		var respBin = http.get("HTTPBIN_URL/get-text", { responseType: "binary" });
 
-		// Hack to convert a utf-8 array to a JS string
-		var strConv = "";
-		function pad(n) { return n.length < 2 ? "0" + n : n; }
-		for( var i = 0; i < respTextInBin.length; i++ ) {
-			strConv += ( "%" + pad(respTextInBin[i].toString(16)));
-		}
-		strConv = decodeURIComponent(strConv);
+		// Convert a UTF-8 ArrayBuffer to a JS string
+		var respBinText = String.fromCharCode.apply(null, new Uint8Array(respBin.body));
+		var strConv = decodeURIComponent(escape(respBinText));
 		if (strConv !== expText) {
 			throw new Error("converted response body should be '" + expText + "' but was '" + strConv + "'");
 		}
-		http.post("HTTPBIN_URL/compare-text", respTextInBin);
+		http.post("HTTPBIN_URL/compare-text", respBin.body);
 
 		// Check binary response
-		var respBin = http.get("HTTPBIN_URL/get-bin", { responseType: "binary" }).body;
-		if (respBin.length !== expBinLength) {
-			throw new Error("response body length should be '" + expBinLength + "' but was '" + respBin.length + "'");
+		var respBin = http.get("HTTPBIN_URL/get-bin", { responseType: "binary" });
+		var respBinTyped = new Uint8Array(respBin.body);
+		if (expBinLength !== respBinTyped.length) {
+			throw new Error("response body length should be '" + expBinLength
+							+ "' but was '" + respBinTyped.length + "'");
 		}
-		for( var i = 0; i < respBin.length; i++ ) {
-			if ( respBin[i] !== i%256 ) {
-				throw new Error("expected value " + (i%256) + " to be at position " + i + " but it was " + respBin[i]);
+		for(var i = 0; i < respBinTyped.length; i++) {
+			if (respBinTyped[i] !== i%256) {
+				throw new Error("expected value " + (i%256) + " to be at position "
+								+ i + " but it was " + respBinTyped[i]);
 			}
 		}
-		http.post("HTTPBIN_URL/compare-bin", respBin);
+		http.post("HTTPBIN_URL/compare-bin", respBin.body);
+
+		// Check ArrayBuffer response
+		var respBin = http.get("HTTPBIN_URL/get-bin", { responseType: "binary" }).body;
+		if (respBin.byteLength !== expBinLength) {
+			throw new Error("response body length should be '" + expBinLength + "' but was '" + respBin.byteLength + "'");
+		}
+
+		// Check ArrayBuffer responses with http.batch()
+		var responses = http.batch([
+			["GET", "HTTPBIN_URL/get-bin", null, { responseType: "binary" }],
+			["GET", "HTTPBIN_URL/get-bin", null, { responseType: "binary" }],
+		]);
+		if (responses.length != 2) {
+			throw new Error("expected 2 responses, received " + responses.length);
+		}
+		for (var i = 0; i < responses.length; i++) {
+			if (responses[i].body.byteLength !== expBinLength) {
+				throw new Error("response body length should be '"
+					+ expBinLength + "' but was '" + responses[i].body.byteLength + "'");
+			}
+		}
 	`))
 	assert.NoError(t, err)
 
@@ -1758,7 +1986,6 @@ func TestErrorCodes(t *testing.T) {
 	t.Parallel()
 	tb, state, samples, rt, _ := newRuntime(t)
 	state.Options.Throw = null.BoolFrom(false)
-	defer tb.Cleanup()
 	sr := tb.Replacer.Replace
 
 	// Handple paths with custom logic
@@ -1868,7 +2095,6 @@ func TestErrorCodes(t *testing.T) {
 func TestResponseWaitingAndReceivingTimings(t *testing.T) {
 	t.Parallel()
 	tb, state, _, rt, _ := newRuntime(t)
-	defer tb.Cleanup()
 
 	// We don't expect any failed requests
 	state.Options.Throw = null.BoolFrom(true)
@@ -1911,7 +2137,6 @@ func TestResponseWaitingAndReceivingTimings(t *testing.T) {
 func TestResponseTimingsWhenTimeout(t *testing.T) {
 	t.Parallel()
 	tb, state, _, rt, _ := newRuntime(t)
-	defer tb.Cleanup()
 
 	// We expect a failed request
 	state.Options.Throw = null.BoolFrom(false)
@@ -1933,7 +2158,6 @@ func TestResponseTimingsWhenTimeout(t *testing.T) {
 func TestNoResponseBodyMangling(t *testing.T) {
 	t.Parallel()
 	tb, state, _, rt, _ := newRuntime(t)
-	defer tb.Cleanup()
 
 	// We don't expect any failed requests
 	state.Options.Throw = null.BoolFrom(true)
@@ -1961,7 +2185,6 @@ func TestNoResponseBodyMangling(t *testing.T) {
 
 func TestRedirectMetricTags(t *testing.T) {
 	tb, _, samples, rt, _ := newRuntime(t)
-	defer tb.Cleanup()
 
 	tb.Mux.HandleFunc("/redirect/post", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/get", http.StatusMovedPermanently)
@@ -2008,7 +2231,6 @@ func TestRedirectMetricTags(t *testing.T) {
 
 func BenchmarkHandlingOfResponseBodies(b *testing.B) {
 	tb, state, samples, rt, _ := newRuntime(b)
-	defer tb.Cleanup()
 
 	state.BPool = bpool.NewBufferPool(100)
 
@@ -2078,7 +2300,6 @@ func BenchmarkHandlingOfResponseBodies(b *testing.B) {
 func TestErrorsWithDecompression(t *testing.T) {
 	t.Parallel()
 	tb, state, _, rt, _ := newRuntime(t)
-	defer tb.Cleanup()
 
 	state.Options.Throw = null.BoolFrom(false)
 
@@ -2106,8 +2327,7 @@ func TestRequestAndBatchTLS(t *testing.T) {
 		t.Skip()
 	}
 	t.Parallel()
-	tb, _, samples, rt, _ := newRuntime(t)
-	defer tb.Cleanup()
+	_, _, samples, rt, _ := newRuntime(t) //nolint:dogsled
 
 	t.Run("cert_expired", func(t *testing.T) {
 		_, err := rt.RunString(`http.get("https://expired.badssl.com/");`)
@@ -2163,7 +2383,6 @@ func TestRequestAndBatchTLS(t *testing.T) {
 func TestDigestAuthWithBody(t *testing.T) {
 	t.Parallel()
 	tb, state, samples, rt, _ := newRuntime(t)
-	defer tb.Cleanup()
 
 	state.Options.Throw = null.BoolFrom(true)
 	state.Options.HTTPDebug = null.StringFrom("full")
@@ -2193,4 +2412,16 @@ func TestDigestAuthWithBody(t *testing.T) {
 	sampleContainers := stats.GetBufferedSamples(samples)
 	assertRequestMetricsEmitted(t, sampleContainers[0:1], "POST", urlRaw, urlRaw, 401, "")
 	assertRequestMetricsEmitted(t, sampleContainers[1:2], "POST", urlRaw, urlRaw, 200, "")
+}
+
+func TestBinaryResponseWithStatus0(t *testing.T) {
+	t.Parallel()
+	_, state, _, rt, _ := newRuntime(t) //nolint:dogsled
+	state.Options.Throw = null.BoolFrom(false)
+	_, err := rt.RunString(`
+		var res = http.get("https://asdajkdahdqiuwhejkasdnakjdnadasdlkas.com", { responseType: "binary" });
+		if (res.status !== 0) { throw new Error("wrong status: " + res.status); }
+		if (res.body !== null) { throw new Error("wrong body: " + JSON.stringify(res.body)); }
+	`)
+	require.NoError(t, err)
 }

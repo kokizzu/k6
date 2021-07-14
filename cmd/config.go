@@ -33,10 +33,12 @@ import (
 	"github.com/spf13/pflag"
 	"gopkg.in/guregu/null.v3"
 
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/executor"
-	"github.com/loadimpact/k6/lib/types"
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/errext"
+	"go.k6.io/k6/errext/exitcodes"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/executor"
+	"go.k6.io/k6/lib/types"
+	"go.k6.io/k6/stats"
 )
 
 // configFlagSet returns a FlagSet with the default run configuration flags.
@@ -169,6 +171,8 @@ func readEnvConfig() (Config, error) {
 // TODO: add better validation, more explicit default values and improve consistency between formats
 // TODO: accumulate all errors and differentiate between the layers?
 func getConsolidatedConfig(fs afero.Fs, cliConf Config, runner lib.Runner) (conf Config, err error) {
+	// TODO: use errext.WithExitCodeIfNone(err, exitcodes.InvalidConfig) where it makes sense?
+
 	fileConf, _, err := readDiskConfig(fs)
 	if err != nil {
 		return conf, err
@@ -225,10 +229,10 @@ func applyDefault(conf Config) Config {
 func deriveAndValidateConfig(conf Config, isExecutable func(string) bool) (result Config, err error) {
 	result = conf
 	result.Options, err = executor.DeriveScenariosFromShortcuts(conf.Options)
-	if err != nil {
-		return result, err
+	if err == nil {
+		err = validateConfig(result, isExecutable)
 	}
-	return result, validateConfig(result, isExecutable)
+	return result, errext.WithExitCodeIfNone(err, exitcodes.InvalidConfig)
 }
 
 func validateConfig(conf Config, isExecutable func(string) bool) error {

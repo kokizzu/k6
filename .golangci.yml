@@ -1,7 +1,5 @@
 run:
   deadline: 5m
-  skip-files:
-  - "rice-box.go$"
 
 issues:
   # Maximum issues count per one linter. Set to 0 to disable. Default is 50.
@@ -24,6 +22,9 @@ issues:
        - gocognit
        - funlen
        - lll
+   - linters:
+     - paralleltest # false positive: https://github.com/kunwardeep/paralleltest/issues/8.
+     text: "does not use range value in test Run"
 
   exclude:
    #TODO: remove this exclusion after https://github.com/golang/lint/issues/381

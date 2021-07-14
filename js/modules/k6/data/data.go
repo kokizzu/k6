@@ -27,8 +27,8 @@ import (
 	"sync"
 
 	"github.com/dop251/goja"
-	"github.com/loadimpact/k6/js/common"
-	"github.com/loadimpact/k6/lib"
+	"go.k6.io/k6/js/common"
+	"go.k6.io/k6/lib"
 )
 
 type data struct {
@@ -46,13 +46,11 @@ func (s *sharedArrays) get(rt *goja.Runtime, name string, call goja.Callable) sh
 	s.mu.RUnlock()
 	if !ok {
 		s.mu.Lock()
+		defer s.mu.Unlock()
 		array, ok = s.data[name]
 		if !ok {
-			func() { // this is done for the defer below
-				defer s.mu.Unlock()
-				array = getShareArrayFromCall(rt, call)
-				s.data[name] = array
-			}()
+			array = getShareArrayFromCall(rt, call)
+			s.data[name] = array
 		}
 	}
 

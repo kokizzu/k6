@@ -39,19 +39,19 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/guregu/null.v3"
 
-	"github.com/loadimpact/k6/js"
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/executor"
-	"github.com/loadimpact/k6/lib/metrics"
-	"github.com/loadimpact/k6/lib/netext"
-	"github.com/loadimpact/k6/lib/netext/httpext"
-	"github.com/loadimpact/k6/lib/testutils"
-	"github.com/loadimpact/k6/lib/testutils/httpmultibin"
-	"github.com/loadimpact/k6/lib/testutils/minirunner"
-	"github.com/loadimpact/k6/lib/testutils/mockresolver"
-	"github.com/loadimpact/k6/lib/types"
-	"github.com/loadimpact/k6/loader"
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/js"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/executor"
+	"go.k6.io/k6/lib/metrics"
+	"go.k6.io/k6/lib/netext"
+	"go.k6.io/k6/lib/netext/httpext"
+	"go.k6.io/k6/lib/testutils"
+	"go.k6.io/k6/lib/testutils/httpmultibin"
+	"go.k6.io/k6/lib/testutils/minirunner"
+	"go.k6.io/k6/lib/testutils/mockresolver"
+	"go.k6.io/k6/lib/types"
+	"go.k6.io/k6/loader"
+	"go.k6.io/k6/stats"
 )
 
 func newTestExecutionScheduler(
@@ -127,6 +127,7 @@ func TestExecutionSchedulerRunNonDefault(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			logger := logrus.New()
 			logger.SetOutput(testutils.NewTestOutput(t))
 			runner, err := js.New(logger, &loader.SourceData{
@@ -235,6 +236,7 @@ func TestExecutionSchedulerRunEnv(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			logger := logrus.New()
 			logger.SetOutput(testutils.NewTestOutput(t))
 			runner, err := js.New(logger, &loader.SourceData{
@@ -274,7 +276,6 @@ func TestExecutionSchedulerRunEnv(t *testing.T) {
 func TestExecutionSchedulerSystemTags(t *testing.T) {
 	t.Parallel()
 	tb := httpmultibin.NewHTTPMultiBin(t)
-	defer tb.Cleanup()
 	sr := tb.Replacer.Replace
 
 	script := sr(`
@@ -376,7 +377,6 @@ func TestExecutionSchedulerSystemTags(t *testing.T) {
 func TestExecutionSchedulerRunCustomTags(t *testing.T) {
 	t.Parallel()
 	tb := httpmultibin.NewHTTPMultiBin(t)
-	defer tb.Cleanup()
 	sr := tb.Replacer.Replace
 
 	scriptTemplate := sr(`
@@ -439,6 +439,7 @@ func TestExecutionSchedulerRunCustomTags(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			logger := logrus.New()
 			logger.SetOutput(testutils.NewTestOutput(t))
 
@@ -495,7 +496,6 @@ func TestExecutionSchedulerRunCustomTags(t *testing.T) {
 func TestExecutionSchedulerRunCustomConfigNoCrossover(t *testing.T) {
 	t.Parallel()
 	tb := httpmultibin.NewHTTPMultiBin(t)
-	defer tb.Cleanup()
 
 	script := tb.Replacer.Replace(`
 	import http from "k6/http";
@@ -683,6 +683,7 @@ func TestExecutionSchedulerRunCustomConfigNoCrossover(t *testing.T) {
 func TestExecutionSchedulerSetupTeardownRun(t *testing.T) {
 	t.Parallel()
 	t.Run("Normal", func(t *testing.T) {
+		t.Parallel()
 		setupC := make(chan struct{})
 		teardownC := make(chan struct{})
 		runner := &minirunner.MiniRunner{
@@ -705,6 +706,7 @@ func TestExecutionSchedulerSetupTeardownRun(t *testing.T) {
 		assert.NoError(t, <-err)
 	})
 	t.Run("Setup Error", func(t *testing.T) {
+		t.Parallel()
 		runner := &minirunner.MiniRunner{
 			SetupFn: func(ctx context.Context, out chan<- stats.SampleContainer) ([]byte, error) {
 				return nil, errors.New("setup error")
@@ -715,6 +717,7 @@ func TestExecutionSchedulerSetupTeardownRun(t *testing.T) {
 		assert.EqualError(t, execScheduler.Run(ctx, ctx, samples), "setup error")
 	})
 	t.Run("Don't Run Setup", func(t *testing.T) {
+		t.Parallel()
 		runner := &minirunner.MiniRunner{
 			SetupFn: func(ctx context.Context, out chan<- stats.SampleContainer) ([]byte, error) {
 				return nil, errors.New("setup error")
@@ -733,6 +736,7 @@ func TestExecutionSchedulerSetupTeardownRun(t *testing.T) {
 	})
 
 	t.Run("Teardown Error", func(t *testing.T) {
+		t.Parallel()
 		runner := &minirunner.MiniRunner{
 			SetupFn: func(ctx context.Context, out chan<- stats.SampleContainer) ([]byte, error) {
 				return nil, nil
@@ -750,6 +754,7 @@ func TestExecutionSchedulerSetupTeardownRun(t *testing.T) {
 		assert.EqualError(t, execScheduler.Run(ctx, ctx, samples), "teardown error")
 	})
 	t.Run("Don't Run Teardown", func(t *testing.T) {
+		t.Parallel()
 		runner := &minirunner.MiniRunner{
 			SetupFn: func(ctx context.Context, out chan<- stats.SampleContainer) ([]byte, error) {
 				return nil, nil
@@ -946,7 +951,7 @@ func TestExecutionSchedulerEndIterations(t *testing.T) {
 	assert.Equal(t, uint64(100), execScheduler.GetState().GetFullIterationCount())
 	assert.Equal(t, uint64(0), execScheduler.GetState().GetPartialIterationCount())
 	assert.Equal(t, int64(100), i)
-	require.Equal(t, 100, len(samples)) // TODO: change to 200 https://github.com/loadimpact/k6/issues/1250
+	require.Equal(t, 100, len(samples)) // TODO: change to 200 https://github.com/k6io/k6/issues/1250
 	for i := 0; i < 100; i++ {
 		mySample, ok := <-samples
 		require.True(t, ok)
@@ -979,8 +984,8 @@ func TestExecutionSchedulerIsRunning(t *testing.T) {
 
 // TestDNSResolver checks the DNS resolution behavior at the ExecutionScheduler level.
 func TestDNSResolver(t *testing.T) {
+	t.Parallel()
 	tb := httpmultibin.NewHTTPMultiBin(t)
-	defer tb.Cleanup()
 	sr := tb.Replacer.Replace
 	script := sr(`
 		import http from "k6/http";
@@ -998,6 +1003,7 @@ func TestDNSResolver(t *testing.T) {
 		}`)
 
 	t.Run("cache", func(t *testing.T) {
+		t.Parallel()
 		testCases := map[string]struct {
 			opts          lib.Options
 			expLogEntries int
@@ -1030,11 +1036,12 @@ func TestDNSResolver(t *testing.T) {
 
 		expErr := sr(`dial tcp 127.0.0.254:HTTPBIN_PORT: connect: connection refused`)
 		if runtime.GOOS == "windows" {
-			expErr = "context deadline exceeded"
+			expErr = "request timeout"
 		}
 		for name, tc := range testCases {
 			tc := tc
 			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 				logger := logrus.New()
 				logger.SetOutput(ioutil.Discard)
 				logHook := testutils.SimpleLogrusHook{HookedLevels: []logrus.Level{logrus.WarnLevel}}
@@ -1148,8 +1155,8 @@ func TestRealTimeAndSetupTeardownMetrics(t *testing.T) {
 
 	expectIn := func(from, to time.Duration, expected stats.SampleContainer) {
 		start := time.Now()
-		from = from * time.Millisecond
-		to = to * time.Millisecond
+		from *= time.Millisecond
+		to *= time.Millisecond
 		for {
 			select {
 			case sampleContainer := <-sampleContainers:
@@ -1247,7 +1254,9 @@ func (p pausableExecutor) SetPaused(bool) error {
 }
 
 func TestSetPaused(t *testing.T) {
+	t.Parallel()
 	t.Run("second pause is an error", func(t *testing.T) {
+		t.Parallel()
 		runner := &minirunner.MiniRunner{}
 		logger := logrus.New()
 		logger.SetOutput(testutils.NewTestOutput(t))
@@ -1262,6 +1271,7 @@ func TestSetPaused(t *testing.T) {
 	})
 
 	t.Run("unpause at the start is an error", func(t *testing.T) {
+		t.Parallel()
 		runner := &minirunner.MiniRunner{}
 		logger := logrus.New()
 		logger.SetOutput(testutils.NewTestOutput(t))
@@ -1274,6 +1284,7 @@ func TestSetPaused(t *testing.T) {
 	})
 
 	t.Run("second unpause is an error", func(t *testing.T) {
+		t.Parallel()
 		runner := &minirunner.MiniRunner{}
 		logger := logrus.New()
 		logger.SetOutput(testutils.NewTestOutput(t))
@@ -1288,6 +1299,7 @@ func TestSetPaused(t *testing.T) {
 	})
 
 	t.Run("an error on pausing is propagated", func(t *testing.T) {
+		t.Parallel()
 		runner := &minirunner.MiniRunner{}
 		logger := logrus.New()
 		logger.SetOutput(testutils.NewTestOutput(t))
@@ -1301,6 +1313,7 @@ func TestSetPaused(t *testing.T) {
 	})
 
 	t.Run("can't pause unpausable executor", func(t *testing.T) {
+		t.Parallel()
 		runner := &minirunner.MiniRunner{}
 		options, err := executor.DeriveScenariosFromShortcuts(lib.Options{
 			Iterations: null.IntFrom(2),

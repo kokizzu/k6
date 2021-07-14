@@ -18,22 +18,23 @@
  *
  */
 
-//go:generate rice embed-go
-
 package compiler
 
 import (
+	_ "embed" // we need this for embedding Babel
 	"sync"
 	"time"
 
-	rice "github.com/GeertJohan/go.rice"
 	"github.com/dop251/goja"
 	"github.com/dop251/goja/parser"
 	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
 
-	"github.com/loadimpact/k6/lib"
+	"go.k6.io/k6/lib"
 )
+
+//go:embed lib/babel.min.js
+var babelSrc string //nolint:gochecknoglobals
 
 var (
 	DefaultOpts = map[string]interface{}{
@@ -154,10 +155,6 @@ func newBabel() (*babel, error) {
 	var err error
 
 	once.Do(func() {
-		conf := rice.Config{
-			LocateOrder: []rice.LocateMethod{rice.LocateEmbedded},
-		}
-		babelSrc := conf.MustFindBox("lib").MustString("babel.min.js")
 		vm := goja.New()
 		if _, err = vm.RunString(babelSrc); err != nil {
 			return

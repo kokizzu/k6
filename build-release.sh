@@ -19,7 +19,7 @@ build() {
     local BUILD_ARGS=(-o "${OUT_DIR}/${NAME}/k6${SUFFIX}" -trimpath)
 
     if [ -n "$VERSION_DETAILS" ]; then
-        BUILD_ARGS+=(-ldflags "-X github.com/loadimpact/k6/lib/consts.VersionDetails=$VERSION_DETAILS")
+        BUILD_ARGS+=(-ldflags "-X go.k6.io/k6/lib/consts.VersionDetails=$VERSION_DETAILS")
     fi
 
     echo "- Building platform: ${ALIAS} (" "${BUILD_ENV[@]}" "go build" "${BUILD_ARGS[@]}" ")"
@@ -43,7 +43,7 @@ package() {
         # The go-bin-* tools expect the binary in /tmp/
         [ ! -r /tmp/k6 ] && cp "${OUT_DIR}/${NAME}/k6" /tmp/k6
         "go-bin-${FMT}" generate --file "packaging/${FMT}.json" -a amd64 \
-            --version "${VERSION#v}" -o "${OUT_DIR}/k6-${VERSION}-amd64.${FMT}"
+            --version "${VERSION#v}" -o "${OUT_DIR}/k6-${VERSION}-linux-amd64.${FMT}"
         ;;
     tgz)
         tar -C "${OUT_DIR}" -zcf "${OUT_DIR}/${NAME}.tar.gz" "$NAME"
@@ -68,16 +68,16 @@ echo "--- Building Release: ${VERSION}"
 
 mkdir -p "$OUT_DIR"
 
-build mac     ""   GOOS=darwin  GOARCH=amd64
-build win32   .exe GOOS=windows GOARCH=386
-build win64   .exe GOOS=windows GOARCH=amd64
-build linux32 ""   GOOS=linux   GOARCH=386    CGO_ENABLED=0
-build linux64 ""   GOOS=linux   GOARCH=amd64  CGO_ENABLED=0
+build macos-amd64   ""   GOOS=darwin  GOARCH=amd64
+build macos-arm64   ""   GOOS=darwin  GOARCH=arm64
+build windows-amd64 .exe GOOS=windows GOARCH=amd64
+build linux-amd64   ""   GOOS=linux   GOARCH=amd64  CGO_ENABLED=0
+build linux-arm64   ""   GOOS=linux   GOARCH=arm64  CGO_ENABLED=0
 
-package linux32 tgz
-package linux64 tgz
-package linux64 rpm
-package linux64 deb
-package mac     zip
-package win32   zip
-package win64   zip
+package macos-amd64   zip
+package macos-arm64   zip
+package windows-amd64 zip
+package linux-amd64   tgz
+package linux-arm64   tgz
+package linux-amd64   rpm
+package linux-amd64   deb

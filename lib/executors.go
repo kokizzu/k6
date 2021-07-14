@@ -31,8 +31,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/loadimpact/k6/stats"
-	"github.com/loadimpact/k6/ui/pb"
+	"go.k6.io/k6/stats"
+	"go.k6.io/k6/ui/pb"
 )
 
 // TODO: remove globals and use some type of explicit dependency injection?
@@ -107,6 +107,14 @@ type ExecutorConfig interface {
 
 	// HasWork reports whether there is any work for the executor to do with a given segment.
 	HasWork(*ExecutionTuple) bool
+}
+
+// ScenarioState holds runtime scenario information returned by the k6/execution
+// JS module.
+type ScenarioState struct {
+	Name, Executor string
+	StartTime      time.Time
+	ProgressFn     func() (float64, []string)
 }
 
 // InitVUFunc is just a shorthand so we don't have to type the function

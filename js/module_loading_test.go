@@ -30,10 +30,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/guregu/null.v3"
 
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/testutils"
-	"github.com/loadimpact/k6/lib/testutils/httpmultibin"
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/testutils"
+	"go.k6.io/k6/lib/testutils/httpmultibin"
+	"go.k6.io/k6/stats"
 )
 
 func newDevNullSampleChannel() chan stats.SampleContainer {
@@ -46,6 +46,7 @@ func newDevNullSampleChannel() chan stats.SampleContainer {
 }
 
 func TestLoadOnceGlobalVars(t *testing.T) {
+	t.Parallel()
 	testCases := map[string]string{
 		"module.exports": `
 			var globalVar;
@@ -73,6 +74,7 @@ func TestLoadOnceGlobalVars(t *testing.T) {
 	for name, data := range testCases {
 		cData := data
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			fs := afero.NewMemMapFs()
 			require.NoError(t, afero.WriteFile(fs, "/C.js", []byte(cData), os.ModePerm))
 
@@ -111,9 +113,10 @@ func TestLoadOnceGlobalVars(t *testing.T) {
 			for name, r := range runners {
 				r := r
 				t.Run(name, func(t *testing.T) {
+					t.Parallel()
 					ch := newDevNullSampleChannel()
 					defer close(ch)
-					initVU, err := r.NewVU(1, ch)
+					initVU, err := r.NewVU(1, 1, ch)
 
 					ctx, cancel := context.WithCancel(context.Background())
 					defer cancel()
@@ -128,6 +131,7 @@ func TestLoadOnceGlobalVars(t *testing.T) {
 }
 
 func TestLoadExportsIsUsableInModule(t *testing.T) {
+	t.Parallel()
 	fs := afero.NewMemMapFs()
 	require.NoError(t, afero.WriteFile(fs, "/A.js", []byte(`
 		export function A() {
@@ -160,9 +164,10 @@ func TestLoadExportsIsUsableInModule(t *testing.T) {
 	for name, r := range runners {
 		r := r
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			ch := newDevNullSampleChannel()
 			defer close(ch)
-			initVU, err := r.NewVU(1, ch)
+			initVU, err := r.NewVU(1, 1, ch)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			vu := initVU.Activate(&lib.VUActivationParams{RunContext: ctx})
@@ -174,11 +179,11 @@ func TestLoadExportsIsUsableInModule(t *testing.T) {
 }
 
 func TestLoadDoesntBreakHTTPGet(t *testing.T) {
+	t.Parallel()
 	// This test that functions such as http.get which require context still work if they are called
 	// inside script that is imported
 
 	tb := httpmultibin.NewHTTPMultiBin(t)
-	defer tb.Cleanup()
 	fs := afero.NewMemMapFs()
 	require.NoError(t, afero.WriteFile(fs, "/A.js", []byte(tb.Replacer.Replace(`
 		import http from "k6/http";
@@ -207,9 +212,10 @@ func TestLoadDoesntBreakHTTPGet(t *testing.T) {
 	for name, r := range runners {
 		r := r
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			ch := newDevNullSampleChannel()
 			defer close(ch)
-			initVU, err := r.NewVU(1, ch)
+			initVU, err := r.NewVU(1, 1, ch)
 			require.NoError(t, err)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -221,6 +227,7 @@ func TestLoadDoesntBreakHTTPGet(t *testing.T) {
 }
 
 func TestLoadGlobalVarsAreNotSharedBetweenVUs(t *testing.T) {
+	t.Parallel()
 	fs := afero.NewMemMapFs()
 	require.NoError(t, afero.WriteFile(fs, "/A.js", []byte(`
 		var globalVar = 0;
@@ -251,9 +258,10 @@ func TestLoadGlobalVarsAreNotSharedBetweenVUs(t *testing.T) {
 	for name, r := range runners {
 		r := r
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			ch := newDevNullSampleChannel()
 			defer close(ch)
-			initVU, err := r.NewVU(1, ch)
+			initVU, err := r.NewVU(1, 1, ch)
 			require.NoError(t, err)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -262,7 +270,7 @@ func TestLoadGlobalVarsAreNotSharedBetweenVUs(t *testing.T) {
 			require.NoError(t, err)
 
 			// run a second VU
-			initVU, err = r.NewVU(2, ch)
+			initVU, err = r.NewVU(2, 2, ch)
 			require.NoError(t, err)
 			ctx, cancel = context.WithCancel(context.Background())
 			defer cancel()
@@ -274,6 +282,7 @@ func TestLoadGlobalVarsAreNotSharedBetweenVUs(t *testing.T) {
 }
 
 func TestLoadCycle(t *testing.T) {
+	t.Parallel()
 	// This is mostly the example from https://hacks.mozilla.org/2018/03/es-modules-a-cartoon-deep-dive/
 	fs := afero.NewMemMapFs()
 	require.NoError(t, afero.WriteFile(fs, "/counter.js", []byte(`
@@ -314,9 +323,10 @@ func TestLoadCycle(t *testing.T) {
 	for name, r := range runners {
 		r := r
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			ch := newDevNullSampleChannel()
 			defer close(ch)
-			initVU, err := r.NewVU(1, ch)
+			initVU, err := r.NewVU(1, 1, ch)
 			require.NoError(t, err)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -328,6 +338,7 @@ func TestLoadCycle(t *testing.T) {
 }
 
 func TestLoadCycleBinding(t *testing.T) {
+	t.Parallel()
 	// This is mostly the example from
 	// http://2ality.com/2015/07/es6-module-exports.html#why-export-bindings
 	fs := afero.NewMemMapFs()
@@ -375,9 +386,10 @@ func TestLoadCycleBinding(t *testing.T) {
 	for name, r := range runners {
 		r := r
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			ch := newDevNullSampleChannel()
 			defer close(ch)
-			initVU, err := r.NewVU(1, ch)
+			initVU, err := r.NewVU(1, 1, ch)
 			require.NoError(t, err)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -389,6 +401,7 @@ func TestLoadCycleBinding(t *testing.T) {
 }
 
 func TestBrowserified(t *testing.T) {
+	t.Parallel()
 	fs := afero.NewMemMapFs()
 	//nolint: lll
 	require.NoError(t, afero.WriteFile(fs, "/browserified.js", []byte(`
@@ -439,9 +452,10 @@ func TestBrowserified(t *testing.T) {
 	for name, r := range runners {
 		r := r
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			ch := make(chan stats.SampleContainer, 100)
 			defer close(ch)
-			initVU, err := r.NewVU(1, ch)
+			initVU, err := r.NewVU(1, 1, ch)
 			require.NoError(t, err)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -453,6 +467,7 @@ func TestBrowserified(t *testing.T) {
 }
 
 func TestLoadingUnexistingModuleDoesntPanic(t *testing.T) {
+	t.Parallel()
 	fs := afero.NewMemMapFs()
 	data := `var b;
 			try {
@@ -481,9 +496,10 @@ func TestLoadingUnexistingModuleDoesntPanic(t *testing.T) {
 	for name, r := range runners {
 		r := r
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			ch := newDevNullSampleChannel()
 			defer close(ch)
-			initVU, err := r.NewVU(1, ch)
+			initVU, err := r.NewVU(1, 1, ch)
 			require.NoError(t, err)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -495,6 +511,7 @@ func TestLoadingUnexistingModuleDoesntPanic(t *testing.T) {
 }
 
 func TestLoadingSourceMapsDoesntErrorOut(t *testing.T) {
+	t.Parallel()
 	fs := afero.NewMemMapFs()
 	data := `exports.default = function() {}
 //# sourceMappingURL=test.min.js.map`
@@ -514,9 +531,10 @@ func TestLoadingSourceMapsDoesntErrorOut(t *testing.T) {
 	for name, r := range runners {
 		r := r
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			ch := newDevNullSampleChannel()
 			defer close(ch)
-			initVU, err := r.NewVU(1, ch)
+			initVU, err := r.NewVU(1, 1, ch)
 			require.NoError(t, err)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

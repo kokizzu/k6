@@ -31,7 +31,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/afero"
 
-	"github.com/loadimpact/k6/lib/fsext"
+	"go.k6.io/k6/lib/fsext"
 )
 
 // ReadSource Reads a source file from any supported destination.
@@ -67,6 +67,11 @@ func ReadSource(
 	pwdURL := &url.URL{Scheme: "file", Path: filepath.ToSlash(filepath.Clean(pwd)) + "/"}
 	srcURL, err := Resolve(pwdURL, filepath.ToSlash(src))
 	if err != nil {
+		var noSchemeError noSchemeRemoteModuleResolutionError
+		if errors.As(err, &noSchemeError) {
+			// TODO maybe try to wrap the original error here as well, without butchering the message
+			return nil, fmt.Errorf(nothingWorkedLoadedMsg, noSchemeError.moduleSpecifier, noSchemeError.err)
+		}
 		return nil, err
 	}
 	result, err := Load(logger, filesystems, srcURL, src)

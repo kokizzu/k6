@@ -28,6 +28,7 @@ export default function () {
 
     // Add one for number of requests
     myCounter.add(1);
+    console.log(myCounter.name, " is config ready")
 
     // Set max response time seen
     maxResponseTime = Math.max(maxResponseTime, res.timings.duration);

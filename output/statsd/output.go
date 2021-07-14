@@ -27,8 +27,8 @@ import (
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/sirupsen/logrus"
 
-	"github.com/loadimpact/k6/output"
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/output"
+	"go.k6.io/k6/stats"
 )
 
 // New creates a new statsd connector client
@@ -172,7 +172,7 @@ func (o *Output) flushMetrics() {
 
 	if count > 0 {
 		if errorCount != 0 {
-			o.logger.Warnf("Couldn't send %d out of %d metrics. Enable debug logging to see individual errors",
+			o.logger.Warnf("Couldn't send %d out of %d metrics. Enable verbose logging with --verbose to see individual errors",
 				errorCount, count)
 		}
 		if err := o.client.Flush(); err != nil {

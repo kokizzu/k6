@@ -33,7 +33,7 @@ func Throw(rt *goja.Runtime, err error) {
 	if e, ok := err.(*goja.Exception); ok {
 		panic(e)
 	}
-	panic(rt.NewGoError(err))
+	panic(rt.ToValue(err))
 }
 
 // GetReader tries to return an io.Reader value from an exported goja value.
@@ -63,5 +63,19 @@ func ToBytes(data interface{}) ([]byte, error) {
 		return dt.Bytes(), nil
 	default:
 		return nil, fmt.Errorf("invalid type %T, expected string, []byte or ArrayBuffer", data)
+	}
+}
+
+// ToString tries to return a string from compatible types.
+func ToString(data interface{}) (string, error) {
+	switch dt := data.(type) {
+	case []byte:
+		return string(dt), nil
+	case string:
+		return dt, nil
+	case goja.ArrayBuffer:
+		return string(dt.Bytes()), nil
+	default:
+		return "", fmt.Errorf("invalid type %T, expected string, []byte or ArrayBuffer", data)
 	}
 }

@@ -31,10 +31,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/guregu/null.v3"
 
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/metrics"
-	"github.com/loadimpact/k6/lib/types"
-	"github.com/loadimpact/k6/stats"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/metrics"
+	"go.k6.io/k6/lib/types"
+	"go.k6.io/k6/stats"
 )
 
 func getTestPerVUIterationsConfig() PerVUIterationsConfig {
@@ -57,8 +57,8 @@ func TestPerVUIterationsRun(t *testing.T) {
 		t, getTestPerVUIterationsConfig(), es,
 		simpleRunner(func(ctx context.Context) error {
 			state := lib.GetState(ctx)
-			currIter, _ := result.LoadOrStore(state.Vu, uint64(0))
-			result.Store(state.Vu, currIter.(uint64)+1)
+			currIter, _ := result.LoadOrStore(state.VUID, uint64(0))
+			result.Store(state.VUID, currIter.(uint64)+1)
 			return nil
 		}),
 	)
@@ -83,7 +83,7 @@ func TestPerVUIterationsRunVariableVU(t *testing.T) {
 	t.Parallel()
 	var (
 		result   sync.Map
-		slowVUID = int64(1)
+		slowVUID = uint64(1)
 	)
 	et, err := lib.NewExecutionTuple(nil, nil)
 	require.NoError(t, err)
@@ -92,11 +92,11 @@ func TestPerVUIterationsRunVariableVU(t *testing.T) {
 		t, getTestPerVUIterationsConfig(), es,
 		simpleRunner(func(ctx context.Context) error {
 			state := lib.GetState(ctx)
-			if state.Vu == slowVUID {
+			if state.VUID == slowVUID {
 				time.Sleep(200 * time.Millisecond)
 			}
-			currIter, _ := result.LoadOrStore(state.Vu, uint64(0))
-			result.Store(state.Vu, currIter.(uint64)+1)
+			currIter, _ := result.LoadOrStore(state.VUID, uint64(0))
+			result.Store(state.VUID, currIter.(uint64)+1)
 			return nil
 		}),
 	)

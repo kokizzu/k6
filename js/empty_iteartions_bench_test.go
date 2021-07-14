@@ -4,10 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/stats"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/stats"
 )
 
 func BenchmarkEmptyIteration(b *testing.B) {
@@ -25,7 +26,7 @@ func BenchmarkEmptyIteration(b *testing.B) {
 		for range ch {
 		}
 	}()
-	initVU, err := r.NewVU(1, ch)
+	initVU, err := r.NewVU(1, 1, ch)
 	if !assert.NoError(b, err) {
 		return
 	}

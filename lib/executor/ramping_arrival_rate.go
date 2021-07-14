@@ -31,11 +31,11 @@ import (
 	"github.com/sirupsen/logrus"
 	"gopkg.in/guregu/null.v3"
 
-	"github.com/loadimpact/k6/lib"
-	"github.com/loadimpact/k6/lib/metrics"
-	"github.com/loadimpact/k6/lib/types"
-	"github.com/loadimpact/k6/stats"
-	"github.com/loadimpact/k6/ui/pb"
+	"go.k6.io/k6/lib"
+	"go.k6.io/k6/lib/metrics"
+	"go.k6.io/k6/lib/types"
+	"go.k6.io/k6/stats"
+	"go.k6.io/k6/ui/pb"
 )
 
 const rampingArrivalRateType = "ramping-arrival-rate"
@@ -158,7 +158,7 @@ func (varc RampingArrivalRateConfig) GetExecutionRequirements(et *lib.ExecutionT
 func (varc RampingArrivalRateConfig) NewExecutor(
 	es *lib.ExecutionState, logger *logrus.Entry,
 ) (lib.Executor, error) {
-	return RampingArrivalRate{
+	return &RampingArrivalRate{
 		BaseExecutor: NewBaseExecutor(&varc, es, logger),
 		config:       varc,
 	}, nil
@@ -175,10 +175,22 @@ func (varc RampingArrivalRateConfig) HasWork(et *lib.ExecutionTuple) bool {
 type RampingArrivalRate struct {
 	*BaseExecutor
 	config RampingArrivalRateConfig
+	et     *lib.ExecutionTuple
 }
 
 // Make sure we implement the lib.Executor interface.
 var _ lib.Executor = &RampingArrivalRate{}
+
+// Init values needed for the execution
+func (varr *RampingArrivalRate) Init(ctx context.Context) error {
+	// err should always be nil, because Init() won't be called for executors
+	// with no work, as determined by their config's HasWork() method.
+	et, err := varr.BaseExecutor.executionState.ExecutionTuple.GetNewExecutionTupleFromValue(varr.config.MaxVUs.Int64)
+	varr.et = et
+	varr.iterSegIndex = lib.NewSegmentedIndex(et)
+
+	return err //nolint: wrapcheck
+}
 
 // cal calculates the  transtitions between stages and gives the next full value produced by the
 // stages. In this explanation we are talking about events and in practice those events are starting
@@ -222,7 +234,7 @@ var _ lib.Executor = &RampingArrivalRate{}
 // up/down as a multiple constant functions, and you will get mostly okayish results. But here is
 // where calculus comes into play. Calculus gives us a way of exactly calculate the area for any
 // given function and linear ramp up/downs just happen to be pretty easy(actual math prove in
-// https://github.com/loadimpact/k6/issues/1299#issuecomment-575661084).
+// https://github.com/k6io/k6/issues/1299#issuecomment-575661084).
 //
 // One tricky last point is what happens if stage only completes 9.8 events? Let's say that the
 // first stage above was 4.9 seconds long 2 * 4.9 is 9.8, we have 9 events and .8 of an event, what
@@ -264,7 +276,7 @@ func (varc RampingArrivalRateConfig) cal(et *lib.ExecutionTuple, ch chan<- time.
 			for ; i <= endCount; i += float64(next()) {
 				// TODO: try to twist this in a way to be able to get i (the only changing part)
 				// somewhere where it is less in the middle of the equation
-				x := (from*dur - math.Sqrt(dur*(from*from*dur+2*(i-doneSoFar)*(to-from)))) / (from - to)
+				x := (from*dur - noNegativeSqrt(dur*(from*from*dur+2*(i-doneSoFar)*(to-from)))) / (from - to)
 
 				ch <- time.Duration(x) + stageStart
 			}
@@ -280,6 +292,23 @@ func (varc RampingArrivalRateConfig) cal(et *lib.ExecutionTuple, ch chan<- time.
 	}
 }
 
+// This is needed because, on some platforms (arm64), sometimes, even though we
+// in *reality* don't get negative results due to the nature of how float64 is
+// implemented, we get negative values (very close to the 0). This would get an
+// sqrt which is *even* smaller and likely will have negligible effects on the
+// final result.
+//
+// TODO: this is probably going to be less necessary if we do some kind of of
+// optimization above and the operations with the float64 are more "accurate"
+// even on arm platforms.
+func noNegativeSqrt(f float64) float64 {
+	if !math.Signbit(f) {
+		return math.Sqrt(f)
+	}
+
+	return 0
+}
+
 // Run executes a variable number of iterations per second.
 //
 // TODO: Split this up and make an independent component that can be reused
@@ -288,7 +317,7 @@ func (varc RampingArrivalRateConfig) cal(et *lib.ExecutionTuple, ch chan<- time.
 // lambdas :D), while having both config frontends still be present for maximum
 // UX benefits. Basically, keep the progress bars and scheduling (i.e. at what
 // time should iteration X begin) different, but keep everyhing else the same.
-// This will allow us to implement https://github.com/loadimpact/k6/issues/1386
+// This will allow us to implement https://github.com/k6io/k6/issues/1386
 // and things like all of the TODOs below in one place only.
 //nolint:funlen,gocognit
 func (varr RampingArrivalRate) Run(parentCtx context.Context, out chan<- stats.SampleContainer) (err error) {
@@ -316,73 +345,28 @@ func (varr RampingArrivalRate) Run(parentCtx context.Context, out chan<- stats.S
 	returnedVUs := make(chan struct{})
 	startTime, maxDurationCtx, regDurationCtx, cancel := getDurationContexts(parentCtx, duration, gracefulStop)
 
+	vusPool := newActiveVUPool()
+
 	defer func() {
 		// Make sure all VUs aren't executing iterations anymore, for the cancel()
 		// below to deactivate them.
 		<-returnedVUs
+		// first close the vusPool so we wait for the gracefulShutdown
+		vusPool.Close()
 		cancel()
 		activeVUsWg.Wait()
 	}()
-	activeVUs := make(chan lib.ActiveVU, maxVUs)
+
 	activeVUsCount := uint64(0)
-
-	returnVU := func(u lib.InitializedVU) {
-		varr.executionState.ReturnVU(u, true)
-		activeVUsWg.Done()
-	}
-	activateVU := func(initVU lib.InitializedVU) lib.ActiveVU {
-		activeVUsWg.Add(1)
-		activeVU := initVU.Activate(getVUActivationParams(maxDurationCtx, varr.config.BaseConfig, returnVU))
-		varr.executionState.ModCurrentlyActiveVUsCount(+1)
-		atomic.AddUint64(&activeVUsCount, 1)
-		return activeVU
-	}
-
-	remainingUnplannedVUs := maxVUs - preAllocatedVUs
-	makeUnplannedVUCh := make(chan struct{})
-	defer close(makeUnplannedVUCh)
-	go func() {
-		defer close(returnedVUs)
-		defer func() {
-			// this is done here as to not have an unplannedVU in the middle of initialization when
-			// starting to return activeVUs
-			for i := uint64(0); i < atomic.LoadUint64(&activeVUsCount); i++ {
-				<-activeVUs
-			}
-		}()
-		for range makeUnplannedVUCh {
-			varr.logger.Debug("Starting initialization of an unplanned VU...")
-			initVU, err := varr.executionState.GetUnplannedVU(maxDurationCtx, varr.logger)
-			if err != nil {
-				// TODO figure out how to return it to the Run goroutine
-				varr.logger.WithError(err).Error("Error while allocating unplanned VU")
-			} else {
-				varr.logger.Debug("The unplanned VU finished initializing successfully!")
-				activeVUs <- activateVU(initVU)
-			}
-		}
-	}()
-
-	// Get the pre-allocated VUs in the local buffer
-	for i := int64(0); i < preAllocatedVUs; i++ {
-		initVU, err := varr.executionState.GetPlannedVU(varr.logger, false)
-		if err != nil {
-			return err
-		}
-		activeVUs <- activateVU(initVU)
-	}
-
 	tickerPeriod := int64(startTickerPeriod.Duration)
-
 	vusFmt := pb.GetFixedLengthIntFormat(maxVUs)
 	itersFmt := pb.GetFixedLengthFloatFormat(maxArrivalRatePerSec, 0) + " iters/s"
 
 	progressFn := func() (float64, []string) {
 		currActiveVUs := atomic.LoadUint64(&activeVUsCount)
 		currentTickerPeriod := atomic.LoadInt64(&tickerPeriod)
-		vusInBuffer := uint64(len(activeVUs))
 		progVUs := fmt.Sprintf(vusFmt+"/"+vusFmt+" VUs",
-			currActiveVUs-vusInBuffer, currActiveVUs)
+			vusPool.Running(), currActiveVUs)
 
 		itersPerSec := 0.0
 		if currentTickerPeriod > 0 {
@@ -405,22 +389,71 @@ func (varr RampingArrivalRate) Run(parentCtx context.Context, out chan<- stats.S
 	}
 
 	varr.progress.Modify(pb.WithProgress(progressFn))
-	go trackProgress(parentCtx, maxDurationCtx, regDurationCtx, varr, progressFn)
+	go trackProgress(parentCtx, maxDurationCtx, regDurationCtx, &varr, progressFn)
 
-	regDurationDone := regDurationCtx.Done()
-	runIterationBasic := getIterationRunner(varr.executionState, varr.logger)
-	runIteration := func(vu lib.ActiveVU) {
-		runIterationBasic(maxDurationCtx, vu)
-		activeVUs <- vu
+	maxDurationCtx = lib.WithScenarioState(maxDurationCtx, &lib.ScenarioState{
+		Name:       varr.config.Name,
+		Executor:   varr.config.Type,
+		StartTime:  startTime,
+		ProgressFn: progressFn,
+	})
+
+	returnVU := func(u lib.InitializedVU) {
+		varr.executionState.ReturnVU(u, true)
+		activeVUsWg.Done()
 	}
 
+	runIterationBasic := getIterationRunner(varr.executionState, varr.logger)
+
+	activateVU := func(initVU lib.InitializedVU) lib.ActiveVU {
+		activeVUsWg.Add(1)
+		activeVU := initVU.Activate(
+			getVUActivationParams(
+				maxDurationCtx, varr.config.BaseConfig, returnVU,
+				varr.nextIterationCounters))
+		varr.executionState.ModCurrentlyActiveVUsCount(+1)
+		atomic.AddUint64(&activeVUsCount, 1)
+
+		vusPool.AddVU(maxDurationCtx, activeVU, runIterationBasic)
+		return activeVU
+	}
+
+	remainingUnplannedVUs := maxVUs - preAllocatedVUs
+	makeUnplannedVUCh := make(chan struct{})
+	defer close(makeUnplannedVUCh)
+	go func() {
+		defer close(returnedVUs)
+
+		for range makeUnplannedVUCh {
+			varr.logger.Debug("Starting initialization of an unplanned VU...")
+			initVU, err := varr.executionState.GetUnplannedVU(maxDurationCtx, varr.logger)
+			if err != nil {
+				// TODO figure out how to return it to the Run goroutine
+				varr.logger.WithError(err).Error("Error while allocating unplanned VU")
+			} else {
+				varr.logger.Debug("The unplanned VU finished initializing successfully!")
+				activateVU(initVU)
+			}
+		}
+	}()
+
+	// Get the pre-allocated VUs in the local buffer
+	for i := int64(0); i < preAllocatedVUs; i++ {
+		initVU, err := varr.executionState.GetPlannedVU(varr.logger, false)
+		if err != nil {
+			return err
+		}
+		activateVU(initVU)
+	}
+
+	regDurationDone := regDurationCtx.Done()
 	timer := time.NewTimer(time.Hour)
 	start := time.Now()
 	ch := make(chan time.Duration, 10) // buffer 10 iteration times ahead
 	var prevTime time.Duration
 	shownWarning := false
 	metricTags := varr.getMetricTags(nil)
-	go varr.config.cal(varr.executionState.ExecutionTuple, ch)
+	go varr.config.cal(varr.et, ch)
 	for nextTime := range ch {
 		select {
 		case <-regDurationDone:
@@ -439,12 +472,10 @@ func (varr RampingArrivalRate) Run(parentCtx context.Context, out chan<- stats.S
 			}
 		}
 
-		select {
-		case vu := <-activeVUs: // ideally, we get the VU from the buffer without any issues
-			go runIteration(vu) //TODO: refactor so we dont spin up a goroutine for each iteration
+		if vusPool.TryRunIteration() {
 			continue
-		default: // no free VUs currently available
 		}
+
 		// Since there aren't any free VUs available, consider this iteration
 		// dropped - we aren't going to try to recover it, but
 
@@ -470,4 +501,61 @@ func (varr RampingArrivalRate) Run(parentCtx context.Context, out chan<- stats.S
 		}
 	}
 	return nil
+}
+
+// activeVUPool controls the activeVUs
+// executing the received requests for iterations.
+type activeVUPool struct {
+	iterations chan struct{}
+	running    uint64
+	wg         sync.WaitGroup
+}
+
+// newActiveVUPool returns an activeVUPool.
+func newActiveVUPool() *activeVUPool {
+	return &activeVUPool{
+		iterations: make(chan struct{}),
+	}
+}
+
+// TryRunIteration invokes a request to execute a new iteration.
+// When there are no available VUs to process the request
+// then false is returned.
+func (p *activeVUPool) TryRunIteration() bool {
+	select {
+	case p.iterations <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// Running returns the number of the currently running VUs.
+func (p *activeVUPool) Running() uint64 {
+	return atomic.LoadUint64(&p.running)
+}
+
+// AddVU adds the active VU to the pool of VUs for handling the incoming requests.
+// When a new request is accepted the runfn function is executed.
+func (p *activeVUPool) AddVU(ctx context.Context, avu lib.ActiveVU, runfn func(context.Context, lib.ActiveVU) bool) {
+	p.wg.Add(1)
+	ch := make(chan struct{})
+	go func() {
+		defer p.wg.Done()
+
+		close(ch)
+		for range p.iterations {
+			atomic.AddUint64(&p.running, uint64(1))
+			runfn(ctx, avu)
+			atomic.AddUint64(&p.running, ^uint64(0))
+		}
+	}()
+	<-ch
+}
+
+// Close stops the pool from accepting requests
+// then it will wait for all on-going iterations to complete.
+func (p *activeVUPool) Close() {
+	close(p.iterations)
+	p.wg.Wait()
 }

@@ -34,17 +34,18 @@ func TestThrow(t *testing.T) {
 	fn1, ok := goja.AssertFunction(rt.ToValue(func() { Throw(rt, errors.New("aaaa")) }))
 	if assert.True(t, ok, "fn1 is invalid") {
 		_, err := fn1(goja.Undefined())
-		assert.EqualError(t, err, "GoError: aaaa")
+		assert.EqualError(t, err, "aaaa")
 
 		fn2, ok := goja.AssertFunction(rt.ToValue(func() { Throw(rt, err) }))
 		if assert.True(t, ok, "fn1 is invalid") {
 			_, err := fn2(goja.Undefined())
-			assert.EqualError(t, err, "GoError: aaaa")
+			assert.EqualError(t, err, "aaaa")
 		}
 	}
 }
 
 func TestToBytes(t *testing.T) {
+	t.Parallel()
 	rt := goja.New()
 	b := []byte("hello")
 	testCases := []struct {
@@ -62,6 +63,34 @@ func TestToBytes(t *testing.T) {
 		tc := tc
 		t.Run(fmt.Sprintf("%T", tc.in), func(t *testing.T) {
 			out, err := ToBytes(tc.in)
+			if tc.expErr != "" {
+				assert.EqualError(t, err, tc.expErr)
+				return
+			}
+			assert.Equal(t, tc.expOut, out)
+		})
+	}
+}
+
+func TestToString(t *testing.T) {
+	t.Parallel()
+	rt := goja.New()
+	s := "hello"
+	testCases := []struct {
+		in             interface{}
+		expOut, expErr string
+	}{
+		{s, s, ""},
+		{"hello", s, ""},
+		{rt.NewArrayBuffer([]byte(s)), s, ""},
+		{struct{}{}, "", "invalid type struct {}, expected string, []byte or ArrayBuffer"},
+	}
+
+	for _, tc := range testCases { //nolint: paralleltest // false positive: https://github.com/kunwardeep/paralleltest/issues/8
+		tc := tc
+		t.Run(fmt.Sprintf("%T", tc.in), func(t *testing.T) {
+			t.Parallel()
+			out, err := ToString(tc.in)
 			if tc.expErr != "" {
 				assert.EqualError(t, err, tc.expErr)
 				return

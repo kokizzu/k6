@@ -26,9 +26,8 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/guregu/null.v3"
 
-	v1 "github.com/loadimpact/k6/api/v1"
-	"github.com/loadimpact/k6/api/v1/client"
-	"github.com/loadimpact/k6/ui"
+	v1 "go.k6.io/k6/api/v1"
+	"go.k6.io/k6/api/v1/client"
 )
 
 func getPauseCmd(ctx context.Context) *cobra.Command {
@@ -50,8 +49,7 @@ func getPauseCmd(ctx context.Context) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ui.Dump(stdout, status)
-			return nil
+			return yamlPrint(stdout, status)
 		},
 	}
 	return pauseCmd
